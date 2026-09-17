@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.dt/
+coverage/
+*.log
+
+# Local reference project; it has its own Git history and must not be vendored.
+source/

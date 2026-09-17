@@ -1,0 +1,10 @@
+{
+  "normal": {
+    "penalty_bps": 1000,
+    "rounding": "floor"
+  },
+  "hard": {
+    "penalty_bps": 1000,
+    "rounding": "floor"
+  }
+}

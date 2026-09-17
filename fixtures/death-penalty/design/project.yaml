@@ -1,0 +1,27 @@
+schema_version: 1
+project_id: death-penalty-fixture
+pilot_system: economy
+environment: local-test
+pilot_config: config/death-penalty.json
+policy_version: 1
+extraction_coverage:
+  kind: json-pointer
+  paths:
+    - config/death-penalty.json
+checks:
+  - id: CHECK-CONFIG-SCHEMA
+    version: 1
+    kind: structure
+    required: true
+  - id: CHECK-NORMAL-PENALTY
+    version: 1
+    kind: behavior
+    required: true
+  - id: CHECK-HARD-UNCHANGED
+    version: 1
+    kind: behavior
+    required: true
+  - id: CHECK-REGRESSION
+    version: 1
+    kind: regression
+    required: true

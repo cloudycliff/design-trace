@@ -1,0 +1,26 @@
+{
+  "name": "design-trace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first design and implementation change control kernel",
+  "type": "module",
+  "bin": {
+    "design-trace": "dist/src/cli.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/**/*.test.js",
+    "check": "npm test",
+    "fixture:test": "node --test fixtures/death-penalty/tests/*.test.mjs"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
+  }
+}
