@@ -11,6 +11,8 @@ export interface SessionEvent {
     | "plan_revised"
     | "approval_issued"
     | "execution_started"
+    | "candidate_frozen"
+    | "validation_completed"
     | "state_changed"
     | "operation_completed";
   occurred_at: string;
@@ -28,6 +30,9 @@ export interface RecoveredSession {
   executionApprovalId: string | null;
   attemptCount: number;
   activeAttemptId: string | null;
+  activeSnapshotId: string | null;
+  activeSnapshotCommit: string | null;
+  validationBatchId: string | null;
   events: SessionEvent[];
 }
 
@@ -101,6 +106,42 @@ export class EventStore {
     await this.append(
       "execution_started",
       { attempt_id: attemptId, approval_id: approvalId, attempt_number: current.attemptCount + 1 },
+      at,
+    );
+  }
+
+  async recordCandidateFrozen(
+    snapshotId: string,
+    attemptId: string,
+    snapshotCommit: string,
+    treeOid: string,
+    at = new Date(),
+  ): Promise<void> {
+    const current = await this.recover();
+    if (current.events.some((event) => event.type === "candidate_frozen" && event.data.snapshot_id === snapshotId)) {
+      return;
+    }
+    await this.append(
+      "candidate_frozen",
+      {
+        snapshot_id: snapshotId,
+        attempt_id: attemptId,
+        snapshot_commit: snapshotCommit,
+        execution_tree_oid: treeOid,
+      },
+      at,
+    );
+  }
+
+  async recordValidationCompleted(
+    snapshotId: string,
+    batchId: string,
+    passed: boolean,
+    at = new Date(),
+  ): Promise<void> {
+    await this.append(
+      "validation_completed",
+      { snapshot_id: snapshotId, batch_id: batchId, all_required_passed: passed },
       at,
     );
   }
@@ -188,6 +229,9 @@ export class EventStore {
     let executionApprovalId: string | null = null;
     let attemptCount = 0;
     let activeAttemptId: string | null = null;
+    let activeSnapshotId: string | null = null;
+    let activeSnapshotCommit: string | null = null;
+    let validationBatchId: string | null = null;
     for (const [index, event] of events.entries()) {
       const { digest, ...unsigned } = event;
       if (
@@ -216,6 +260,11 @@ export class EventStore {
         planDigest = digest;
         planRequestDigest = requestDigest;
         executionApprovalId = null;
+        attemptCount = 0;
+        activeAttemptId = null;
+        activeSnapshotId = null;
+        activeSnapshotCommit = null;
+        validationBatchId = null;
       } else if (event.type === "approval_issued") {
         if (event.data.stage === "execution" && typeof event.data.approval_id === "string") {
           executionApprovalId = event.data.approval_id;
@@ -226,6 +275,24 @@ export class EventStore {
         }
         attemptCount += 1;
         activeAttemptId = event.data.attempt_id;
+        activeSnapshotId = null;
+        activeSnapshotCommit = null;
+        validationBatchId = null;
+      } else if (event.type === "candidate_frozen") {
+        if (
+          typeof event.data.snapshot_id !== "string" ||
+          typeof event.data.snapshot_commit !== "string"
+        ) {
+          throw new DesignTraceError("INTEGRITY_ERROR", "Candidate event is incomplete");
+        }
+        activeSnapshotId = event.data.snapshot_id;
+        activeSnapshotCommit = event.data.snapshot_commit;
+        validationBatchId = null;
+      } else if (event.type === "validation_completed") {
+        if (event.data.snapshot_id !== activeSnapshotId || typeof event.data.batch_id !== "string") {
+          throw new DesignTraceError("INTEGRITY_ERROR", "Validation event does not match the active snapshot");
+        }
+        validationBatchId = event.data.batch_id;
       } else if (event.type === "state_changed") {
         const from = event.data.from as ChangeState;
         const to = event.data.to as ChangeState;
@@ -246,6 +313,9 @@ export class EventStore {
       executionApprovalId,
       attemptCount,
       activeAttemptId,
+      activeSnapshotId,
+      activeSnapshotCommit,
+      validationBatchId,
       events,
     };
   }

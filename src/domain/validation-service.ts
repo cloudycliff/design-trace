@@ -1,13 +1,13 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { digestObject, sha256 } from "../core/digest.js";
 import { DesignTraceError } from "../core/errors.js";
 import { git } from "../git/git-client.js";
+import { workspaceManifestDigest } from "../git/workspace-manifest.js";
 import { GitTreeReader } from "../formal/formal-repository.js";
-import { validateBaseline } from "../formal/project-validator.js";
 import { jsonPointer } from "./reconciliation.js";
 import { loadProjectDefinition, type RegisteredCheck } from "./formal-objects.js";
 
@@ -50,27 +50,6 @@ function checkDefinition(check: RegisteredCheck): void {
   if (!check.runner || !(["builtin", "command"] as const).includes(check.runner.type)) {
     throw new DesignTraceError("INVALID_PROJECT", `Check ${check.id} has no supported runner`);
   }
-}
-
-async function workspaceManifestDigest(root: string): Promise<string> {
-  const entries: Array<{ path: string; digest: string }> = [];
-  async function visit(directory: string, relativeDirectory: string): Promise<void> {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (!relativeDirectory && entry.name === ".git") continue;
-      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
-      const absolutePath = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) {
-        entries.push({ path: relativePath, digest: "unsupported-symlink" });
-      } else if (entry.isDirectory()) {
-        await visit(absolutePath, relativePath);
-      } else if (entry.isFile()) {
-        entries.push({ path: relativePath, digest: sha256(await readFile(absolutePath)) });
-      }
-    }
-  }
-  await visit(root, "");
-  entries.sort((left, right) => left.path.localeCompare(right.path));
-  return digestObject(entries);
 }
 
 export class ValidationService {
@@ -173,8 +152,23 @@ export class ValidationService {
     if (check.runner?.type === "builtin") {
       try {
         if (check.runner.name === "death-penalty-schema") {
-          await validateBaseline(reader);
-          return { result: "passed", exitCode: 0, log: "Baseline structure and Rule/Binding consistency passed." };
+          if (!check.input?.path) {
+            throw new DesignTraceError("INVALID_PROJECT", `Check ${check.id} requires an input path`);
+          }
+          const document = JSON.parse(await reader.readText(check.input.path)) as Record<string, unknown>;
+          for (const difficulty of ["normal", "hard"] as const) {
+            const value = document[difficulty];
+            if (
+              value === null ||
+              Array.isArray(value) ||
+              typeof value !== "object" ||
+              !Number.isInteger((value as Record<string, unknown>).penalty_bps) ||
+              (value as Record<string, unknown>).rounding !== "floor"
+            ) {
+              throw new DesignTraceError("INVALID_PROJECT", `Invalid death penalty config for ${difficulty}`);
+            }
+          }
+          return { result: "passed", exitCode: 0, log: "Death penalty JSON structure passed." };
         }
         if (check.runner.name === "json-pointer-equals") {
           if (!check.input?.path || !check.input.pointer) {
@@ -204,6 +198,15 @@ export class ValidationService {
     const workspace = path.join(batchRoot, `work-${check.id}`);
     try {
       await git(process.cwd(), ["clone", "--no-checkout", "--no-local", this.repositoryPath, workspace]);
+      try {
+        await git(workspace, [
+          "fetch",
+          this.repositoryPath,
+          "+refs/dt/snapshots/*:refs/dt/snapshots/*",
+        ]);
+      } catch {
+        // A baseline-only repository has no snapshot namespace yet.
+      }
       await git(workspace, ["checkout", "--detach", revision]);
       const before = await git(workspace, ["status", "--porcelain"]);
       if (before) return { result: "error", exitCode: null, log: `Validation workspace was not clean before execution:\n${before}` };

@@ -1,5 +1,6 @@
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { digestObject } from "../core/digest.js";
 import { DesignTraceError } from "../core/errors.js";
 import { EventStore, type RecoveredSession } from "../core/event-store.js";
@@ -7,6 +8,7 @@ import { withFileLock } from "../core/file-lock.js";
 import { FormalRepository } from "../formal/formal-repository.js";
 import { buildContext } from "./context-service.js";
 import { ApprovalAuthority } from "../operator/approval-authority.js";
+import { git } from "../git/git-client.js";
 import {
   validateChangePlan,
   type ChangePlan,
@@ -25,6 +27,7 @@ export interface ExecutionAttempt {
   plan_revision: number;
   plan_approval_id: string;
   baseline_commit: string;
+  workspace_id: string;
   attempt_number: number;
   status: "started";
   started_at: string;
@@ -248,12 +251,43 @@ export class ChangeSessionService {
       }
       const approval = await new ApprovalAuthority(this.projectRoot).requireValidExecutionApproval(changeId, now);
       const first = session.events[0]!;
+      const baselineCommit = String(first.data.baseline_commit);
+      const executionRoot = path.join(this.projectRoot, "execution");
+      const workspacePath = path.join(executionRoot, attemptId);
+      await mkdir(executionRoot, { recursive: true });
+      if (!(await exists(workspacePath))) {
+        const temporaryWorkspace = path.join(executionRoot, `.${attemptId}.${randomUUID()}.tmp`);
+        try {
+          await git(process.cwd(), [
+            "clone",
+            "--no-checkout",
+            "--no-local",
+            path.join(this.projectRoot, "repository.git"),
+            temporaryWorkspace,
+          ]);
+          await git(temporaryWorkspace, ["checkout", "--detach", baselineCommit]);
+          await git(temporaryWorkspace, ["remote", "remove", "origin"]);
+          if (await git(temporaryWorkspace, ["status", "--porcelain"])) {
+            throw new DesignTraceError("INTEGRITY_ERROR", "New execution workspace is not clean");
+          }
+          await rename(temporaryWorkspace, workspacePath);
+        } catch (error) {
+          await rm(temporaryWorkspace, { recursive: true, force: true });
+          throw error;
+        }
+      } else {
+        const workspaceCommit = await git(workspacePath, ["rev-parse", "HEAD"]);
+        if (workspaceCommit !== baselineCommit) {
+          throw new DesignTraceError("INTEGRITY_ERROR", "Recovered execution workspace has the wrong baseline");
+        }
+      }
       const attempt: ExecutionAttempt = {
         attempt_id: attemptId,
         change_id: changeId,
         plan_revision: session.planRevision,
         plan_approval_id: approval.approval_id,
-        baseline_commit: String(first.data.baseline_commit),
+        baseline_commit: baselineCommit,
+        workspace_id: attemptId,
         attempt_number: session.attemptCount + 1,
         status: "started",
         started_at: now.toISOString(),

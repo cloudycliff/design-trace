@@ -6,7 +6,7 @@ const execFileAsync = promisify(execFile);
 export async function git(
   cwd: string,
   args: readonly string[],
-  options: { gitDir?: string } = {},
+  options: { gitDir?: string; trim?: boolean } = {},
 ): Promise<string> {
   const gitArgs = options.gitDir ? [`--git-dir=${options.gitDir}`, ...args] : [...args];
   const { stdout } = await execFileAsync("git", gitArgs, {
@@ -15,5 +15,5 @@ export async function git(
     windowsHide: true,
     maxBuffer: 10 * 1024 * 1024,
   });
-  return stdout.trim();
+  return options.trim === false ? stdout : stdout.trim();
 }

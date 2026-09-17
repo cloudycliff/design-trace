@@ -10,6 +10,7 @@ import { reconcileBinding } from "./domain/reconciliation.js";
 import { ValidationService } from "./domain/validation-service.js";
 import { ApprovalAuthority } from "./operator/approval-authority.js";
 import { OperatorServer } from "./operator/operator-server.js";
+import { CandidateService } from "./domain/candidate-service.js";
 import { FormalRepository } from "./formal/formal-repository.js";
 
 function flag(name: string): string | undefined {
@@ -166,6 +167,42 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "freeze-candidate") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const change = flag("change");
+    const attempt = flag("attempt");
+    const key = flag("key");
+    if (!project || !change || !attempt || !key) {
+      throw new Error(
+        "freeze-candidate requires --project <id> --change <id> --attempt <id> --key <idempotency-key>",
+      );
+    }
+    const service = new CandidateService(path.join(data, project));
+    process.stdout.write(
+      `${JSON.stringify(await service.freezeCandidate(change, attempt, key), null, 2)}\n`,
+    );
+    return;
+  }
+
+  if (command === "validate-candidate") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const change = flag("change");
+    const snapshot = flag("snapshot");
+    const key = flag("key");
+    if (!project || !change || !snapshot || !key) {
+      throw new Error(
+        "validate-candidate requires --project <id> --change <id> --snapshot <id> --key <idempotency-key>",
+      );
+    }
+    const service = new CandidateService(path.join(data, project));
+    process.stdout.write(
+      `${JSON.stringify(await service.validateCandidate(change, snapshot, key), null, 2)}\n`,
+    );
+    return;
+  }
+
   process.stderr.write(
     "Usage:\n" +
       "  design-trace init --source <git-repo> --data <kernel-data> --project <id> [--revision <commit>]\n" +
@@ -178,7 +215,9 @@ async function main(): Promise<void> {
       "  design-trace validate --data <kernel-data> --project <id> [--checks <check-id,...>]\n" +
       "  design-trace review-execution --data <kernel-data> --project <id> --change <id>\n" +
       "  design-trace operator-server --data <kernel-data> --project <id>\n" +
-      "  design-trace start-execution --data <kernel-data> --project <id> --change <id> --key <key>\n",
+      "  design-trace start-execution --data <kernel-data> --project <id> --change <id> --key <key>\n" +
+      "  design-trace freeze-candidate --data <kernel-data> --project <id> --change <id> --attempt <id> --key <key>\n" +
+      "  design-trace validate-candidate --data <kernel-data> --project <id> --change <id> --snapshot <id> --key <key>\n",
   );
   process.exitCode = 2;
 }
