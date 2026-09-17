@@ -7,23 +7,40 @@ import { validateBaseline, type TreeReader, type ValidatedBaseline } from "./pro
 
 const FORMAL_REF = "refs/heads/dt-main";
 
-function commitReader(sourceRepository: string, commit: string): TreeReader {
-  return {
-    async listFiles() {
-      const output = await git(sourceRepository, ["ls-tree", "-r", commit]);
-      if (!output) return [];
-      return output.split(/\r?\n/u).map((line) => {
-        const match = /^(\d+)\s+\w+\s+[0-9a-f]+\t(.+)$/u.exec(line);
-        if (!match?.[1] || !match[2]) {
-          throw new DesignTraceError("INVALID_PROJECT", `Cannot parse Git tree entry: ${line}`);
-        }
-        return { mode: match[1], path: match[2] };
-      });
-    },
-    readText(filePath: string) {
-      return git(sourceRepository, ["show", `${commit}:${filePath}`]);
-    },
-  };
+export class GitTreeReader implements TreeReader {
+  constructor(
+    private readonly workingDirectory: string,
+    private readonly revision: string,
+    private readonly gitDirectory?: string,
+  ) {}
+
+  async listFiles(): Promise<Array<{ mode: string; path: string }>> {
+    const output = await this.run(["ls-tree", "-r", this.revision]);
+    if (!output) return [];
+    return output.split(/\r?\n/u).map((line) => {
+      const match = /^(\d+)\s+\w+\s+[0-9a-f]+\t(.+)$/u.exec(line);
+      if (!match?.[1] || !match[2]) {
+        throw new DesignTraceError("INVALID_PROJECT", `Cannot parse Git tree entry: ${line}`);
+      }
+      return { mode: match[1], path: match[2] };
+    });
+  }
+
+  readText(filePath: string): Promise<string> {
+    return this.run(["show", `${this.revision}:${filePath}`]);
+  }
+
+  blobOid(filePath: string): Promise<string> {
+    return this.run(["rev-parse", `${this.revision}:${filePath}`]);
+  }
+
+  treeOid(): Promise<string> {
+    return this.run(["rev-parse", `${this.revision}^{tree}`]);
+  }
+
+  private run(args: string[]): Promise<string> {
+    return git(this.workingDirectory, args, this.gitDirectory ? { gitDir: this.gitDirectory } : {});
+  }
 }
 
 export interface InitializedProject extends ValidatedBaseline {
@@ -54,7 +71,7 @@ export class FormalRepository {
       );
     }
     const commit = await git(sourceRepository, ["rev-parse", "--verify", `${revision}^{commit}`]);
-    const baseline = await validateBaseline(commitReader(sourceRepository, commit));
+    const baseline = await validateBaseline(new GitTreeReader(sourceRepository, commit));
     if (baseline.projectId !== requestedProjectId) {
       throw new DesignTraceError(
         "INVALID_PROJECT",
@@ -116,5 +133,9 @@ export class FormalRepository {
       throw new DesignTraceError("INVALID_PROJECT", `Unsafe formal path: ${filePath}`);
     }
     return git(process.cwd(), ["show", `${FORMAL_REF}:${filePath}`], { gitDir: this.repositoryPath });
+  }
+
+  treeReader(revision = FORMAL_REF): GitTreeReader {
+    return new GitTreeReader(process.cwd(), revision, this.repositoryPath);
   }
 }

@@ -79,4 +79,28 @@ test("CLI initializes and reads from the formal ref", async () => {
     { encoding: "utf8", windowsHide: true },
   );
   assert.equal(JSON.parse(status.stdout).state, "awaiting_execution_approval");
+
+  const context = await execFileAsync(
+    process.execPath,
+    [cli, "context", "--data", data, "--project", "death-penalty-fixture", "--targets", "RULE-DEATH-NORMAL"],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.deepEqual(
+    JSON.parse(context.stdout).definite_impacts.map((impact: { rule: { id: string } }) => impact.rule.id),
+    ["RULE-TUTORIAL-DEATH"],
+  );
+
+  const reconciliation = await execFileAsync(
+    process.execPath,
+    [cli, "reconcile", "--data", data, "--project", "death-penalty-fixture", "--rule", "RULE-DEATH-NORMAL"],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(JSON.parse(reconciliation.stdout)[0].status, "consistent");
+
+  const validation = await execFileAsync(
+    process.execPath,
+    [cli, "validate", "--data", data, "--project", "death-penalty-fixture"],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(JSON.parse(validation.stdout).all_required_passed, true);
 });

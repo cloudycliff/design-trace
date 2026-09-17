@@ -4,6 +4,8 @@ import { parseFrontmatter, parseYamlObject } from "./frontmatter.js";
 export interface TreeReader {
   listFiles(): Promise<Array<{ mode: string; path: string }>>;
   readText(path: string): Promise<string>;
+  blobOid?(path: string): Promise<string>;
+  treeOid?(): Promise<string>;
 }
 
 export interface ValidatedBaseline {

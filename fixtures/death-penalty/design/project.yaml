@@ -13,15 +13,42 @@ checks:
     version: 1
     kind: structure
     required: true
+    input:
+      path: config/death-penalty.json
+    runner:
+      type: builtin
+      name: death-penalty-schema
   - id: CHECK-NORMAL-PENALTY
     version: 1
-    kind: behavior
+    kind: parameter
     required: true
+    input:
+      path: config/death-penalty.json
+      pointer: /normal/penalty_bps
+    expected: 1000
+    runner:
+      type: builtin
+      name: json-pointer-equals
   - id: CHECK-HARD-UNCHANGED
     version: 1
-    kind: behavior
+    kind: parameter
     required: true
+    input:
+      path: config/death-penalty.json
+      pointer: /hard/penalty_bps
+    expected: 1000
+    runner:
+      type: builtin
+      name: json-pointer-equals
   - id: CHECK-REGRESSION
     version: 1
     kind: regression
     required: true
+    runner:
+      type: command
+      executable: node
+      args:
+        - --test
+        - tests/death-penalty.test.mjs
+    timeout_ms: 30000
+    environment: local-test
