@@ -44,3 +44,13 @@ npm run fixture:test
 
 当前实现范围、验证结果、限制和下一步以
 [`docs/implementation-progress.md`](docs/implementation-progress.md) 为准。
+
+当前 CLI 已覆盖初始化、计划、查询、对账、验证和执行前审查。审批动作不提供普通 CLI
+命令，只能在仅绑定 `127.0.0.1` 的操作员页面完成：
+
+```powershell
+node dist/src/cli.js operator-server --data <kernel-data> --project <project-id>
+node dist/src/cli.js review-execution --data <kernel-data> --project <project-id> --change <change-id>
+```
+
+将第二条命令返回的 `review_path` 拼接到操作员服务输出的 `origin` 后，在浏览器中打开并审批。

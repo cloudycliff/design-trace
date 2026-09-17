@@ -8,6 +8,8 @@ import { buildContext } from "./domain/context-service.js";
 import { loadFormalObjects } from "./domain/formal-objects.js";
 import { reconcileBinding } from "./domain/reconciliation.js";
 import { ValidationService } from "./domain/validation-service.js";
+import { ApprovalAuthority } from "./operator/approval-authority.js";
+import { OperatorServer } from "./operator/operator-server.js";
 import { FormalRepository } from "./formal/formal-repository.js";
 
 function flag(name: string): string | undefined {
@@ -121,6 +123,49 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "review-execution") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const change = flag("change");
+    if (!project || !change) throw new Error("review-execution requires --project <id> --change <id>");
+    const authority = new ApprovalAuthority(path.join(data, project));
+    const review = await authority.prepareExecutionReview(change);
+    process.stdout.write(
+      `${JSON.stringify({ ...review, review_path: `/review/execution/${review.review_id}` }, null, 2)}\n`,
+    );
+    return;
+  }
+
+  if (command === "start-execution") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const change = flag("change");
+    const key = flag("key");
+    if (!project || !change || !key) {
+      throw new Error("start-execution requires --project <id> --change <id> --key <idempotency-key>");
+    }
+    const service = new ChangeSessionService(path.join(data, project), project);
+    process.stdout.write(`${JSON.stringify(await service.startExecution(change, key), null, 2)}\n`);
+    return;
+  }
+
+  if (command === "operator-server") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    if (!project) throw new Error("operator-server requires --project <id>");
+    const server = new OperatorServer(new ApprovalAuthority(path.join(data, project)));
+    const origin = await server.start();
+    process.stdout.write(`${JSON.stringify({ origin, binding: "loopback-only" })}\n`);
+    await new Promise<void>((resolve) => {
+      const stop = (): void => {
+        void server.close().then(resolve);
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+    return;
+  }
+
   process.stderr.write(
     "Usage:\n" +
       "  design-trace init --source <git-repo> --data <kernel-data> --project <id> [--revision <commit>]\n" +
@@ -130,7 +175,10 @@ async function main(): Promise<void> {
       "  design-trace status --data <kernel-data> --project <id> --change <id>\n" +
       "  design-trace context --data <kernel-data> --project <id> --targets <rule-id,...>\n" +
       "  design-trace reconcile --data <kernel-data> --project <id> --rule <rule-id>\n" +
-      "  design-trace validate --data <kernel-data> --project <id> [--checks <check-id,...>]\n",
+      "  design-trace validate --data <kernel-data> --project <id> [--checks <check-id,...>]\n" +
+      "  design-trace review-execution --data <kernel-data> --project <id> --change <id>\n" +
+      "  design-trace operator-server --data <kernel-data> --project <id>\n" +
+      "  design-trace start-execution --data <kernel-data> --project <id> --change <id> --key <key>\n",
   );
   process.exitCode = 2;
 }

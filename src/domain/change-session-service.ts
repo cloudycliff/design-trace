@@ -5,6 +5,8 @@ import { DesignTraceError } from "../core/errors.js";
 import { EventStore, type RecoveredSession } from "../core/event-store.js";
 import { withFileLock } from "../core/file-lock.js";
 import { FormalRepository } from "../formal/formal-repository.js";
+import { buildContext } from "./context-service.js";
+import { ApprovalAuthority } from "../operator/approval-authority.js";
 import {
   validateChangePlan,
   type ChangePlan,
@@ -17,7 +19,24 @@ export interface BegunChange {
   state: "draft";
 }
 
+export interface ExecutionAttempt {
+  attempt_id: string;
+  change_id: string;
+  plan_revision: number;
+  plan_approval_id: string;
+  baseline_commit: string;
+  attempt_number: number;
+  status: "started";
+  started_at: string;
+}
+
 const terminalStates = new Set(["applied", "cancelled"]);
+
+function assertChangeId(changeId: string): void {
+  if (!/^CHG-[A-Z0-9-]{1,64}$/u.test(changeId)) {
+    throw new DesignTraceError("INVALID_PROJECT", "Invalid Change ID");
+  }
+}
 
 async function exists(filePath: string): Promise<boolean> {
   try {
@@ -102,6 +121,7 @@ export class ChangeSessionService {
     idempotencyKey: string,
     now = new Date(),
   ): Promise<ChangePlan> {
+    assertChangeId(changeId);
     return withFileLock(this.#lockPath, async () => {
       const store = new EventStore(this.#sessionsRoot, changeId);
       let session = await store.recover();
@@ -135,12 +155,18 @@ export class ChangeSessionService {
         return saved;
       }
 
+      const context = await buildContext(
+        this.#formalRepository.treeReader(String(first.data.baseline_commit)),
+        draft.targets,
+      );
+      const contextId = `CTX-${context.context_digest.slice(0, 16).toUpperCase()}`;
       const plan: ChangePlan = {
         ...draft,
         schema_version: 1,
         id: changeId,
         plan_revision: revision,
         baseline_commit: String(first.data.baseline_commit),
+        context_id: contextId,
         created_at: now.toISOString(),
       };
       validateChangePlan(plan);
@@ -152,7 +178,11 @@ export class ChangeSessionService {
           { expectedPlanRevision, currentPlanRevision: session.planRevision },
         );
       }
-      if (session.state === "awaiting_execution_approval" || session.state === "blocked") {
+      if (
+        session.state === "awaiting_execution_approval" ||
+        session.state === "ready_to_execute" ||
+        session.state === "blocked"
+      ) {
         session = await store.transition("draft", "plan revised", now);
       }
       if (session.state !== "draft") {
@@ -160,6 +190,12 @@ export class ChangeSessionService {
       }
 
       await mkdir(plansDirectory, { recursive: true });
+      const contextsDirectory = path.join(this.#sessionsRoot, changeId, "contexts");
+      const contextPath = path.join(contextsDirectory, `${contextId}.json`);
+      await mkdir(contextsDirectory, { recursive: true });
+      if (!(await exists(contextPath))) {
+        await writeFile(contextPath, `${JSON.stringify(context, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      }
       if (await exists(planPath)) {
         const saved = JSON.parse(await readFile(planPath, "utf8")) as unknown;
         if (digestObject(saved) !== planDigest) {
@@ -176,6 +212,59 @@ export class ChangeSessionService {
   }
 
   async getStatus(changeId: string): Promise<RecoveredSession> {
+    assertChangeId(changeId);
     return new EventStore(this.#sessionsRoot, changeId).recover();
+  }
+
+  async startExecution(
+    changeId: string,
+    idempotencyKey: string,
+    now = new Date(),
+  ): Promise<ExecutionAttempt> {
+    assertChangeId(changeId);
+    return withFileLock(this.#lockPath, async () => {
+      const store = new EventStore(this.#sessionsRoot, changeId);
+      let session = await store.recover();
+      const requestDigest = digestObject({ change_id: changeId, plan_revision: session.planRevision });
+      const prior = await store.findOperation("start_execution", idempotencyKey, requestDigest);
+      if (prior !== undefined) return prior as ExecutionAttempt;
+      const attemptId = `ATT-${digestObject({ change_id: changeId, idempotency_key: idempotencyKey })
+        .slice(0, 16)
+        .toUpperCase()}`;
+      const attemptPath = path.join(this.#sessionsRoot, changeId, "attempts", `${attemptId}.json`);
+      if (session.state === "executing" && session.activeAttemptId === attemptId && await exists(attemptPath)) {
+        const recovered = JSON.parse(await readFile(attemptPath, "utf8")) as ExecutionAttempt;
+        await store.recordOperation("start_execution", idempotencyKey, requestDigest, recovered, now);
+        return recovered;
+      }
+      if (session.state !== "ready_to_execute") {
+        if (!session.executionApprovalId) {
+          throw new DesignTraceError("APPROVAL_REQUIRED", "Execution cannot start without operator approval");
+        }
+        throw new DesignTraceError("INVALID_STATE", `Cannot start execution while Change is ${session.state}`);
+      }
+      if (session.attemptCount >= 3) {
+        throw new DesignTraceError("INVALID_STATE", "Execution attempt budget is exhausted");
+      }
+      const approval = await new ApprovalAuthority(this.projectRoot).requireValidExecutionApproval(changeId, now);
+      const first = session.events[0]!;
+      const attempt: ExecutionAttempt = {
+        attempt_id: attemptId,
+        change_id: changeId,
+        plan_revision: session.planRevision,
+        plan_approval_id: approval.approval_id,
+        baseline_commit: String(first.data.baseline_commit),
+        attempt_number: session.attemptCount + 1,
+        status: "started",
+        started_at: now.toISOString(),
+      };
+      await mkdir(path.dirname(attemptPath), { recursive: true });
+      await writeFile(attemptPath, `${JSON.stringify(attempt, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      await store.recordExecutionStarted(attemptId, approval.approval_id, now);
+      session = await store.transition("executing", "approved execution started", now);
+      void session;
+      await store.recordOperation("start_execution", idempotencyKey, requestDigest, attempt, now);
+      return attempt;
+    });
   }
 }

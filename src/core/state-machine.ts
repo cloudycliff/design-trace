@@ -21,7 +21,7 @@ export type ChangeState = (typeof changeStates)[number];
 const transitions: Readonly<Record<ChangeState, readonly ChangeState[]>> = {
   draft: ["awaiting_execution_approval", "cancelled"],
   awaiting_execution_approval: ["draft", "ready_to_execute", "cancelled"],
-  ready_to_execute: ["awaiting_execution_approval", "executing", "cancelled"],
+  ready_to_execute: ["draft", "awaiting_execution_approval", "executing", "cancelled"],
   executing: ["candidate_ready", "blocked", "interrupted", "cancelled"],
   candidate_ready: ["validating", "blocked", "cancelled"],
   validating: ["awaiting_result_approval", "blocked", "interrupted", "cancelled"],

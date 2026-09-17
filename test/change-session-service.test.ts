@@ -29,7 +29,6 @@ const planDraft: ChangePlanDraft = {
   acceptance_checks: ["CHECK-CONFIG-SCHEMA", "CHECK-NORMAL-PENALTY", "CHECK-REGRESSION"],
   risk_level: "low",
   policy_version: 1,
-  context_id: "CTX-DEATH-REDUCE-1",
 };
 
 async function initializedService(): Promise<{
@@ -116,12 +115,14 @@ test("caller cannot override kernel-owned plan identity or baseline", async () =
     baseline_commit: "0".repeat(40),
     plan_revision: 99,
     schema_version: 99,
+    context_id: "CTX-FORGED",
   } as unknown as ChangePlanDraft;
   const plan = await service.revisePlan(begun.changeId, 0, hostileDraft, "plan-key");
   assert.equal(plan.id, begun.changeId);
   assert.equal(plan.baseline_commit, begun.baselineCommit);
   assert.equal(plan.plan_revision, 1);
   assert.equal(plan.schema_version, 1);
+  assert.notEqual(plan.context_id, "CTX-FORGED");
 });
 
 test("project write lock rejects a concurrent writer", async () => {

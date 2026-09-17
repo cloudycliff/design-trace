@@ -40,7 +40,7 @@ export interface ChangePlan {
 
 export type ChangePlanDraft = Omit<
   ChangePlan,
-  "schema_version" | "id" | "plan_revision" | "baseline_commit" | "created_at"
+  "schema_version" | "id" | "plan_revision" | "baseline_commit" | "context_id" | "created_at"
 >;
 
 const safePathPattern = "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$";

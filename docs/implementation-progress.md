@@ -2,7 +2,7 @@
 
 > 最后更新：2026-09-17  
 > 设计基线：`design-trace-architecture-and-roadmap.md` v0.7  
-> 当前结论：T01 固定夹具与正式引用原型已完成；T02 已形成可运行切片；T03 已完成固定 Git 树上的上下文、单层影响、JSON 对账与验证基础；尚未达到阶段 0 或阶段 1 退出条件。
+> 当前结论：T01～T03 已形成固定夹具上的可运行切片；T04 已完成独立操作员执行审批原型；尚未达到阶段 0 或阶段 1 退出条件。
 
 ## 范围说明
 
@@ -51,13 +51,25 @@
 - 命令验证在独立 clone 中运行；验证期间修改输入会被判为错误。
 - CLI 新增 `context`、`reconcile` 和 `validate`。
 
+### T04 操作员计划批准（执行阶段原型）
+
+- `context_id` 改由内核根据正式 Git 树的上下文摘要生成，调用方不能伪造或覆盖。
+- 执行审查摘要绑定 Change、计划版本、基线 commit、计划摘要、上下文摘要和策略版本。
+- 操作员批准记录使用独立密钥生成 HMAC 完整性标签；密钥只保存在 `operator/` 运行目录。
+- 最小审查页只绑定 `127.0.0.1`，校验 Host、Origin、HttpOnly/SameSite Cookie、CSRF token 和一次性 nonce。
+- 面向普通 CLI/MCP 的审查请求不返回 nonce，也不存在可传入 `approved: true` 的接口。
+- 审查页展示用户请求、目标、风险、允许路径、保护检查以及确定/可能影响。
+- 批准有效期默认 24 小时；过期、篡改、错计划、错上下文和 nonce 重放均被拒绝。
+- 修改已批准计划会回到草稿，生成新版本并从事件投影中清除旧执行批准。
+- `start-execution` 在创建尝试前重新验证批准；无批准时无状态副作用。
+
 ## 当前验证结果
 
 2026-09-17 本地执行：
 
 | 命令 | 结果 | 覆盖 |
 |---|---:|---|
-| `npm test` | 21 通过 | CLI 基础与 T03 调用、上下文摘要、一层影响及 stale 降级、JSON 对账、固定树验证与输入修改检测，以及既有事务/正式引用测试 |
+| `npm test` | 26 通过 | T04 审批绑定、过期/篡改/重放拒绝、浏览器来源与 CSRF、计划修改后批准失效，以及 CLI、T01～T03 既有测试 |
 | `npm run fixture:test` | 5 通过 | 0、1、19、100、101 金币在普通/困难模式下的 10% 向下取整基线行为 |
 
 这些测试只覆盖当前切片，不代表第 15.1 节 A01～A22 已全部通过。
@@ -66,9 +78,9 @@
 
 - T01：尚未由内核生成 bootstrap 回执；当前夹具内只有 bootstrap Change。
 - T01 / 阶段 0：缺少真实项目、真实初始 commit、稳定程序入口、原有测试和用户确认的业务含义。
-- T02：Rule、Decision、Approval 等其余正式对象尚无完整 Schema；写锁的崩溃后陈旧锁判定、所有写接口的统一幂等包装和批准失效规则尚未实现。
+- T02：Rule、Decision 等其余正式对象尚无完整 Schema；写锁的崩溃后陈旧锁判定和所有写接口的统一幂等包装尚未实现。
 - T03：当前只支持一层关系和显式 JSON Binding；尚未接入 Change 的候选快照、计划派生期望值、人工 Evidence 录入及二层“可能影响”。
-- T04：独立 loopback 操作员页面、会话、防重放 nonce 和批准签发尚未实现。
+- T04：当前只实现 execution 批准；操作员会话为进程内状态，尚未实现拒绝/取消界面、服务重启恢复和 result 批准。
 - T05 以后：执行副本、候选冻结、验证隔离、结果 bundle、Git CAS 发布、恢复、回退、MCP 与 Skill 均未实现。
 - 当前 YAML 校验仅覆盖首个夹具所需字段，还不是全部正式对象的完整 JSON Schema 验证。
 - 事件追加遵循单内核串行假设，尚无跨进程写锁；并发启动内核不在当前已验证范围内。
@@ -76,8 +88,8 @@
 ## 下一步开发顺序
 
 1. 收尾 T02：补齐正式对象 Schema、批准失效事件、陈旧锁安全恢复和统一操作幂等包装。
-2. 收尾 T03：把上下文摘要绑定计划，补齐候选期望值和 ValidationRun 持久化契约。
-3. 完成 T04 的独立操作员批准原型，并用 A02/A03 验证 MCP/CLI 不能自行签发批准。
+2. 收尾 T03：补齐候选期望值并把 ValidationRun 接入 Change 事件链。
+3. 收尾 T04：增加退回/取消、操作员会话恢复与批准异常恢复。
 4. 推进 T05：独立执行副本、白名单差异检查和候选 Git 树冻结。
 5. 获得真实试点资料后补写阶段 0 记录；在此之前不宣称阶段 0 完成。
 
@@ -92,6 +104,8 @@
 - 上下文与影响分析：`src/domain/context-service.ts`
 - JSON 对账：`src/domain/reconciliation.ts`
 - 固定树验证器：`src/domain/validation-service.ts`
+- 批准签发与校验：`src/operator/approval-authority.ts`
+- Loopback 审查页：`src/operator/operator-server.ts`
 - 正式仓库初始化：`src/formal/formal-repository.ts`
 - 基线校验：`src/formal/project-validator.ts`
 - 首条验收夹具：`fixtures/death-penalty/`

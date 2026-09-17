@@ -6,7 +6,13 @@ import { assertTransition, type ChangeState } from "./state-machine.js";
 
 export interface SessionEvent {
   sequence: number;
-  type: "change_started" | "plan_revised" | "state_changed" | "operation_completed";
+  type:
+    | "change_started"
+    | "plan_revised"
+    | "approval_issued"
+    | "execution_started"
+    | "state_changed"
+    | "operation_completed";
   occurred_at: string;
   data: Record<string, unknown>;
   previous_digest: string | null;
@@ -19,6 +25,9 @@ export interface RecoveredSession {
   planRevision: number;
   planDigest: string | null;
   planRequestDigest: string | null;
+  executionApprovalId: string | null;
+  attemptCount: number;
+  activeAttemptId: string | null;
   events: SessionEvent[];
 }
 
@@ -63,6 +72,35 @@ export class EventStore {
     await this.append(
       "plan_revised",
       { plan_revision: revision, plan_digest: planDigest, request_digest: requestDigest },
+      at,
+    );
+  }
+
+  async recordApproval(
+    stage: "execution" | "result",
+    approvalId: string,
+    subjectDigest: string,
+    at = new Date(),
+  ): Promise<void> {
+    const current = await this.recover();
+    if (current.events.some((event) => event.type === "approval_issued" && event.data.approval_id === approvalId)) {
+      return;
+    }
+    await this.append(
+      "approval_issued",
+      { stage, approval_id: approvalId, subject_digest: subjectDigest },
+      at,
+    );
+  }
+
+  async recordExecutionStarted(attemptId: string, approvalId: string, at = new Date()): Promise<void> {
+    const current = await this.recover();
+    if (current.events.some((event) => event.type === "execution_started" && event.data.attempt_id === attemptId)) {
+      return;
+    }
+    await this.append(
+      "execution_started",
+      { attempt_id: attemptId, approval_id: approvalId, attempt_number: current.attemptCount + 1 },
       at,
     );
   }
@@ -147,6 +185,9 @@ export class EventStore {
     let planRevision = 0;
     let planDigest: string | null = null;
     let planRequestDigest: string | null = null;
+    let executionApprovalId: string | null = null;
+    let attemptCount = 0;
+    let activeAttemptId: string | null = null;
     for (const [index, event] of events.entries()) {
       const { digest, ...unsigned } = event;
       if (
@@ -174,6 +215,17 @@ export class EventStore {
         planRevision = revision;
         planDigest = digest;
         planRequestDigest = requestDigest;
+        executionApprovalId = null;
+      } else if (event.type === "approval_issued") {
+        if (event.data.stage === "execution" && typeof event.data.approval_id === "string") {
+          executionApprovalId = event.data.approval_id;
+        }
+      } else if (event.type === "execution_started") {
+        if (typeof event.data.attempt_id !== "string") {
+          throw new DesignTraceError("INTEGRITY_ERROR", "Execution event has no attempt ID");
+        }
+        attemptCount += 1;
+        activeAttemptId = event.data.attempt_id;
       } else if (event.type === "state_changed") {
         const from = event.data.from as ChangeState;
         const to = event.data.to as ChangeState;
@@ -185,7 +237,17 @@ export class EventStore {
       }
       previousDigest = digest;
     }
-    return { changeId: this.changeId, state, planRevision, planDigest, planRequestDigest, events };
+    return {
+      changeId: this.changeId,
+      state,
+      planRevision,
+      planDigest,
+      planRequestDigest,
+      executionApprovalId,
+      attemptCount,
+      activeAttemptId,
+      events,
+    };
   }
 
   private async readEvents(): Promise<SessionEvent[]> {

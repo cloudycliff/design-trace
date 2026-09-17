@@ -30,6 +30,5 @@
     "CHECK-REGRESSION"
   ],
   "risk_level": "low",
-  "policy_version": 1,
-  "context_id": "CTX-DEATH-REDUCE-1"
+  "policy_version": 1
 }
