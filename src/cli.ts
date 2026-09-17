@@ -12,6 +12,7 @@ import { ApprovalAuthority } from "./operator/approval-authority.js";
 import { OperatorServer } from "./operator/operator-server.js";
 import { CandidateService } from "./domain/candidate-service.js";
 import { FormalRepository } from "./formal/formal-repository.js";
+import { PublicationService } from "./domain/publication-service.js";
 
 function flag(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
@@ -203,6 +204,49 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "build-result-review") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const change = flag("change");
+    const key = flag("key");
+    if (!project || !change || !key) {
+      throw new Error("build-result-review requires --project <id> --change <id> --key <idempotency-key>");
+    }
+    const service = new PublicationService(path.join(data, project));
+    process.stdout.write(`${JSON.stringify(await service.buildResultReview(change, key), null, 2)}\n`);
+    return;
+  }
+
+  if (command === "review-result") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const change = flag("change");
+    const bundle = flag("bundle");
+    if (!project || !change || !bundle) {
+      throw new Error("review-result requires --project <id> --change <id> --bundle <id>");
+    }
+    const authority = new ApprovalAuthority(path.join(data, project));
+    const review = await authority.prepareResultReview(change, bundle);
+    process.stdout.write(
+      `${JSON.stringify({ ...review, review_path: `/review/result/${review.review_id}` }, null, 2)}\n`,
+    );
+    return;
+  }
+
+  if (command === "commit-change") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const change = flag("change");
+    const bundle = flag("bundle");
+    const key = flag("key");
+    if (!project || !change || !bundle || !key) {
+      throw new Error("commit-change requires --project <id> --change <id> --bundle <id> --key <idempotency-key>");
+    }
+    const service = new PublicationService(path.join(data, project));
+    process.stdout.write(`${JSON.stringify(await service.commitChange(change, bundle, key), null, 2)}\n`);
+    return;
+  }
+
   process.stderr.write(
     "Usage:\n" +
       "  design-trace init --source <git-repo> --data <kernel-data> --project <id> [--revision <commit>]\n" +
@@ -217,7 +261,10 @@ async function main(): Promise<void> {
       "  design-trace operator-server --data <kernel-data> --project <id>\n" +
       "  design-trace start-execution --data <kernel-data> --project <id> --change <id> --key <key>\n" +
       "  design-trace freeze-candidate --data <kernel-data> --project <id> --change <id> --attempt <id> --key <key>\n" +
-      "  design-trace validate-candidate --data <kernel-data> --project <id> --change <id> --snapshot <id> --key <key>\n",
+      "  design-trace validate-candidate --data <kernel-data> --project <id> --change <id> --snapshot <id> --key <key>\n" +
+      "  design-trace build-result-review --data <kernel-data> --project <id> --change <id> --key <key>\n" +
+      "  design-trace review-result --data <kernel-data> --project <id> --change <id> --bundle <id>\n" +
+      "  design-trace commit-change --data <kernel-data> --project <id> --change <id> --bundle <id> --key <key>\n",
   );
   process.exitCode = 2;
 }

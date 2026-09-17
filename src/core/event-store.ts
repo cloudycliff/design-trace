@@ -13,6 +13,9 @@ export interface SessionEvent {
     | "execution_started"
     | "candidate_frozen"
     | "validation_completed"
+    | "bundle_built"
+    | "commit_prepared"
+    | "change_applied"
     | "state_changed"
     | "operation_completed";
   occurred_at: string;
@@ -28,11 +31,18 @@ export interface RecoveredSession {
   planDigest: string | null;
   planRequestDigest: string | null;
   executionApprovalId: string | null;
+  resultApprovalId: string | null;
   attemptCount: number;
   activeAttemptId: string | null;
   activeSnapshotId: string | null;
   activeSnapshotCommit: string | null;
   validationBatchId: string | null;
+  activeBundleId: string | null;
+  activePayloadCommit: string | null;
+  activePayloadTreeOid: string | null;
+  activeReviewDigest: string | null;
+  preparedCommit: string | null;
+  appliedCommit: string | null;
   events: SessionEvent[];
 }
 
@@ -146,6 +156,74 @@ export class EventStore {
     );
   }
 
+  async recordBundleBuilt(
+    bundleId: string,
+    payloadCommit: string,
+    payloadTreeOid: string,
+    reviewDigest: string,
+    at = new Date(),
+  ): Promise<void> {
+    const current = await this.recover();
+    if (current.events.some((event) => event.type === "bundle_built" && event.data.bundle_id === bundleId)) return;
+    await this.append(
+      "bundle_built",
+      {
+        bundle_id: bundleId,
+        payload_commit: payloadCommit,
+        payload_tree_oid: payloadTreeOid,
+        review_digest: reviewDigest,
+      },
+      at,
+    );
+  }
+
+  async recordCommitPrepared(
+    bundleId: string,
+    candidateCommit: string,
+    baselineCommit: string,
+    idempotencyKey: string,
+    requestDigest: string,
+    at = new Date(),
+  ): Promise<void> {
+    const current = await this.recover();
+    const prior = current.events.find((event) => event.type === "commit_prepared");
+    if (prior) {
+      if (
+        prior.data.bundle_id !== bundleId ||
+        prior.data.candidate_commit !== candidateCommit ||
+        prior.data.baseline_commit !== baselineCommit ||
+        prior.data.idempotency_key !== idempotencyKey ||
+        prior.data.request_digest !== requestDigest
+      ) {
+        throw new DesignTraceError("INTEGRITY_ERROR", "Prepared commit record conflicts with the active publication");
+      }
+      return;
+    }
+    await this.append(
+      "commit_prepared",
+      {
+        bundle_id: bundleId,
+        candidate_commit: candidateCommit,
+        baseline_commit: baselineCommit,
+        idempotency_key: idempotencyKey,
+        request_digest: requestDigest,
+      },
+      at,
+    );
+  }
+
+  async recordChangeApplied(bundleId: string, commit: string, at = new Date()): Promise<void> {
+    const current = await this.recover();
+    const prior = current.events.find((event) => event.type === "change_applied");
+    if (prior) {
+      if (prior.data.bundle_id !== bundleId || prior.data.commit !== commit) {
+        throw new DesignTraceError("INTEGRITY_ERROR", "Applied event conflicts with the formal reference");
+      }
+      return;
+    }
+    await this.append("change_applied", { bundle_id: bundleId, commit }, at);
+  }
+
   async transition(to: ChangeState, reason: string, at = new Date()): Promise<RecoveredSession> {
     const current = await this.recover();
     assertTransition(current.state, to);
@@ -227,11 +305,18 @@ export class EventStore {
     let planDigest: string | null = null;
     let planRequestDigest: string | null = null;
     let executionApprovalId: string | null = null;
+    let resultApprovalId: string | null = null;
     let attemptCount = 0;
     let activeAttemptId: string | null = null;
     let activeSnapshotId: string | null = null;
     let activeSnapshotCommit: string | null = null;
     let validationBatchId: string | null = null;
+    let activeBundleId: string | null = null;
+    let activePayloadCommit: string | null = null;
+    let activePayloadTreeOid: string | null = null;
+    let activeReviewDigest: string | null = null;
+    let preparedCommit: string | null = null;
+    let appliedCommit: string | null = null;
     for (const [index, event] of events.entries()) {
       const { digest, ...unsigned } = event;
       if (
@@ -260,14 +345,23 @@ export class EventStore {
         planDigest = digest;
         planRequestDigest = requestDigest;
         executionApprovalId = null;
+        resultApprovalId = null;
         attemptCount = 0;
         activeAttemptId = null;
         activeSnapshotId = null;
         activeSnapshotCommit = null;
         validationBatchId = null;
+        activeBundleId = null;
+        activePayloadCommit = null;
+        activePayloadTreeOid = null;
+        activeReviewDigest = null;
+        preparedCommit = null;
+        appliedCommit = null;
       } else if (event.type === "approval_issued") {
         if (event.data.stage === "execution" && typeof event.data.approval_id === "string") {
           executionApprovalId = event.data.approval_id;
+        } else if (event.data.stage === "result" && typeof event.data.approval_id === "string") {
+          resultApprovalId = event.data.approval_id;
         }
       } else if (event.type === "execution_started") {
         if (typeof event.data.attempt_id !== "string") {
@@ -278,6 +372,12 @@ export class EventStore {
         activeSnapshotId = null;
         activeSnapshotCommit = null;
         validationBatchId = null;
+        activeBundleId = null;
+        activePayloadCommit = null;
+        activePayloadTreeOid = null;
+        activeReviewDigest = null;
+        resultApprovalId = null;
+        preparedCommit = null;
       } else if (event.type === "candidate_frozen") {
         if (
           typeof event.data.snapshot_id !== "string" ||
@@ -293,6 +393,31 @@ export class EventStore {
           throw new DesignTraceError("INTEGRITY_ERROR", "Validation event does not match the active snapshot");
         }
         validationBatchId = event.data.batch_id;
+      } else if (event.type === "bundle_built") {
+        if (
+          typeof event.data.bundle_id !== "string" ||
+          typeof event.data.payload_commit !== "string" ||
+          typeof event.data.payload_tree_oid !== "string" ||
+          typeof event.data.review_digest !== "string"
+        ) {
+          throw new DesignTraceError("INTEGRITY_ERROR", "Bundle event is incomplete");
+        }
+        activeBundleId = event.data.bundle_id;
+        activePayloadCommit = event.data.payload_commit;
+        activePayloadTreeOid = event.data.payload_tree_oid;
+        activeReviewDigest = event.data.review_digest;
+        resultApprovalId = null;
+        preparedCommit = null;
+      } else if (event.type === "commit_prepared") {
+        if (event.data.bundle_id !== activeBundleId || typeof event.data.candidate_commit !== "string") {
+          throw new DesignTraceError("INTEGRITY_ERROR", "Prepared commit does not match the active bundle");
+        }
+        preparedCommit = event.data.candidate_commit;
+      } else if (event.type === "change_applied") {
+        if (event.data.bundle_id !== activeBundleId || event.data.commit !== preparedCommit) {
+          throw new DesignTraceError("INTEGRITY_ERROR", "Applied commit does not match the prepared publication");
+        }
+        appliedCommit = String(event.data.commit);
       } else if (event.type === "state_changed") {
         const from = event.data.from as ChangeState;
         const to = event.data.to as ChangeState;
@@ -311,11 +436,18 @@ export class EventStore {
       planDigest,
       planRequestDigest,
       executionApprovalId,
+      resultApprovalId,
       attemptCount,
       activeAttemptId,
       activeSnapshotId,
       activeSnapshotCommit,
       validationBatchId,
+      activeBundleId,
+      activePayloadCommit,
+      activePayloadTreeOid,
+      activeReviewDigest,
+      preparedCommit,
+      appliedCommit,
       events,
     };
   }

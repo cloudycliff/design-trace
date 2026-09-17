@@ -1,8 +1,8 @@
 # Design Trace 实施进度
 
-> 最后更新：2026-09-17  
+> 最后更新：2026-09-18
 > 设计基线：`design-trace-architecture-and-roadmap.md` v0.7  
-> 当前结论：T01～T05 已形成固定夹具上的首条“计划批准—独立执行—候选冻结—验证”纵向切片；尚未实现结果批准与正式发布，因此未达到阶段 1 或个人 MVP 退出条件。
+> 当前结论：T01～T06 已形成固定夹具上的“计划批准—独立执行—候选冻结—验证—结果批准—原子发布”完整纵向切片；尚未实现回退、原因查询和 Agent 接入，因此未达到个人 MVP 退出条件。
 
 ## 范围说明
 
@@ -76,13 +76,25 @@
 - required 检查全部通过才进入 `awaiting_result_approval`；失败进入 `blocked`，运行异常进入 `interrupted`。
 - CLI 新增 `freeze-candidate` 和 `validate-candidate`。
 
+### T06 结果审查与正式发布（固定夹具切片）
+
+- 从活动执行快照组合不可变 payload：同时更新业务配置与对应 Rule 版本，并写入正式 Change、计划、上下文、执行批准和验证批次。
+- 验证日志按 SHA-256 保存到 `design/artifacts/sha256/`；构建时重新核对日志内容、计划摘要、上下文摘要、快照 ref/tree 和全部 required 检查。
+- payload 通过 `refs/dt/payloads/<change>/<bundle>` 保留；ReviewBundle 绑定 payload tree、执行树、验证运行、计划、上下文、影响、策略和执行批准。
+- 操作员服务增加独立结果审查页，继续执行 Host、Origin、HttpOnly/SameSite Cookie、CSRF 和一次性 nonce 校验。
+- 结果批准使用 HMAC 完整性标签，严格绑定一个活动 bundle 的 `review_digest`；没有普通 CLI 批准入口，也不能用于另一个 bundle。
+- 最终树只在 payload 上追加结果 Approval 和包含完整 ReviewBundle 的确定性回执；最终 commit 直接以计划基线为父提交。
+- 发布前写入 `commit_prepared`，再使用 `git update-ref <ref> <new> <old>` 完成 compare-and-swap；基线被推进时返回 `STALE_BASELINE` 且不覆盖竞争引用。
+- CAS 已成功但响应或 applied 事件丢失时，根据准备记录和正式引用恢复同一个 commit，不重复创建正式结果。
+- `build-result-review` 与 `commit-change` 支持幂等键；CLI 新增 `build-result-review`、`review-result` 和 `commit-change`。
+
 ## 当前验证结果
 
-2026-09-17 本地执行：
+2026-09-18 本地执行：
 
 | 命令 | 结果 | 覆盖 |
 |---|---:|---|
-| `npm test` | 29 通过 | T05 独立副本、精确范围检查、内部快照保留、冻结后隔离验证，以及 T01～T04 既有测试 |
+| `npm test` | 34 通过 | T06 payload/bundle、结果批准、原子发布、CAS 冲突和响应丢失恢复，以及 T01～T05 既有测试 |
 | `npm run fixture:test` | 10 通过 | 0、1、19、100、101 金币在普通/困难模式下按配置值向下取整的程序行为 |
 
 这些测试只覆盖当前切片，不代表第 15.1 节 A01～A22 已全部通过。
@@ -93,9 +105,10 @@
 - T01 / 阶段 0：缺少真实项目、真实初始 commit、稳定程序入口、原有测试和用户确认的业务含义。
 - T02：Rule、Decision 等其余正式对象尚无完整 Schema；写锁的崩溃后陈旧锁判定和所有写接口的统一幂等包装尚未实现。
 - T03：当前只支持一层关系和显式 JSON Binding；尚未接入 Change 的候选快照、计划派生期望值、人工 Evidence 录入及二层“可能影响”。
-- T04：当前只实现 execution 批准；操作员会话为进程内状态，尚未实现拒绝/取消界面、服务重启恢复和 result 批准。
+- T04：execution 与 result 两阶段批准已实现；操作员会话仍为进程内状态，尚未实现拒绝/取消界面和服务重启恢复。
 - T05：尚未接入真实 Agent 进程生命周期、停止确认、修复重试与候选 Rule 自动生成；当前仅支持计划明确列出的既有 JSON 文件。
-- T06 以后：结果 bundle、第二次批准、Git CAS 正式发布、提交恢复、回退、MCP 与 Skill 均未实现。
+- T06：当前按首个 JSON/Rule 夹具生成正式对象；尚未覆盖通用 Rule 字段变更、完整对象 Schema、索引重建失败状态和所有 commit 创建前中断点。
+- T07 以后：原因查询、补偿回退、MCP 与 Skill 尚未实现。
 - 当前 YAML 校验仅覆盖首个夹具所需字段，还不是全部正式对象的完整 JSON Schema 验证。
 - 事件追加遵循单内核串行假设，尚无跨进程写锁；并发启动内核不在当前已验证范围内。
 
@@ -104,8 +117,9 @@
 1. 收尾 T02：补齐正式对象 Schema、批准失效事件、陈旧锁安全恢复和统一操作幂等包装。
 2. 收尾 T03：补齐候选期望值并把 ValidationRun 接入 Change 事件链。
 3. 收尾 T04：增加退回/取消、操作员会话恢复与批准异常恢复。
-4. 推进 T06：组合 payload、生成结果审查包、签发第二次批准并以 Git CAS 发布正式引用。
-5. 获得真实试点资料后补写阶段 0 记录；在此之前不宣称阶段 0 完成。
+4. 推进 T07：从正式提交查询 Change 原因与绑定历史，并实现以新 Change 表达的补偿回退。
+5. 推进 T08：在领域服务之上增加 MCP 与流程 Skill，不为适配层绕过两次批准。
+6. 获得真实试点资料后补写阶段 0 记录；在此之前不宣称阶段 0 完成。
 
 ## 后续接手入口
 
@@ -121,6 +135,7 @@
 - 批准签发与校验：`src/operator/approval-authority.ts`
 - Loopback 审查页：`src/operator/operator-server.ts`
 - 执行范围与快照：`src/domain/candidate-service.ts`
+- payload、bundle 与 CAS 发布：`src/domain/publication-service.ts`
 - 正式仓库初始化：`src/formal/formal-repository.ts`
 - 基线校验：`src/formal/project-validator.ts`
 - 首条验收夹具：`fixtures/death-penalty/`
