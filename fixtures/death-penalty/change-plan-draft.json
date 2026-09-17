@@ -1,0 +1,35 @@
+{
+  "origin": "user_instruction",
+  "kind": "update",
+  "request": "普通模式死亡损失从 10% 改为 5%，困难模式保持 10%",
+  "goal": "普通模式采用 5% 扣金规则，困难模式行为保持原样",
+  "targets": ["RULE-DEATH-NORMAL"],
+  "allowed_paths": ["config/death-penalty.json"],
+  "allowed_config_changes": [
+    {
+      "path": "config/death-penalty.json",
+      "pointer": "/normal/penalty_bps",
+      "before": 1000,
+      "after": 500
+    }
+  ],
+  "design_changes": [
+    {
+      "rule_id": "RULE-DEATH-NORMAL",
+      "fields": ["parameters.penalty_bps"]
+    }
+  ],
+  "out_of_scope": [
+    "困难模式参数与行为",
+    "全局冷却、装备、复活道具和存档格式"
+  ],
+  "protected_checks": ["CHECK-HARD-UNCHANGED"],
+  "acceptance_checks": [
+    "CHECK-CONFIG-SCHEMA",
+    "CHECK-NORMAL-PENALTY",
+    "CHECK-REGRESSION"
+  ],
+  "risk_level": "low",
+  "policy_version": 1,
+  "context_id": "CTX-DEATH-REDUCE-1"
+}

@@ -1,5 +1,6 @@
 export type ErrorCode =
   | "INVALID_STATE"
+  | "STALE_PLAN"
   | "IDEMPOTENCY_CONFLICT"
   | "INTEGRITY_ERROR"
   | "INVALID_PROJECT"

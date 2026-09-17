@@ -6,7 +6,7 @@ import { assertTransition, type ChangeState } from "./state-machine.js";
 
 export interface SessionEvent {
   sequence: number;
-  type: "change_started" | "state_changed" | "operation_completed";
+  type: "change_started" | "plan_revised" | "state_changed" | "operation_completed";
   occurred_at: string;
   data: Record<string, unknown>;
   previous_digest: string | null;
@@ -16,6 +16,9 @@ export interface SessionEvent {
 export interface RecoveredSession {
   changeId: string;
   state: ChangeState;
+  planRevision: number;
+  planDigest: string | null;
+  planRequestDigest: string | null;
   events: SessionEvent[];
 }
 
@@ -35,13 +38,33 @@ export class EventStore {
     this.#eventsPath = path.join(sessionsRoot, changeId, "events.jsonl");
   }
 
-  async start(at = new Date()): Promise<RecoveredSession> {
+  async start(metadata: Record<string, unknown> = {}, at = new Date()): Promise<RecoveredSession> {
     const existing = await this.readEvents();
     if (existing.length > 0) {
       return this.recoverFrom(existing);
     }
-    await this.append("change_started", { change_id: this.changeId, state: "draft" }, at);
+    await this.append("change_started", { change_id: this.changeId, state: "draft", ...metadata }, at);
     return this.recover();
+  }
+
+  async recordPlanRevision(
+    revision: number,
+    planDigest: string,
+    requestDigest: string,
+    at = new Date(),
+  ): Promise<void> {
+    const current = await this.recover();
+    if (revision !== current.planRevision + 1) {
+      throw new DesignTraceError(
+        "INVALID_STATE",
+        `Expected plan revision ${current.planRevision + 1}, received ${revision}`,
+      );
+    }
+    await this.append(
+      "plan_revised",
+      { plan_revision: revision, plan_digest: planDigest, request_digest: requestDigest },
+      at,
+    );
   }
 
   async transition(to: ChangeState, reason: string, at = new Date()): Promise<RecoveredSession> {
@@ -121,6 +144,9 @@ export class EventStore {
 
     let previousDigest: string | null = null;
     let state: ChangeState = "draft";
+    let planRevision = 0;
+    let planDigest: string | null = null;
+    let planRequestDigest: string | null = null;
     for (const [index, event] of events.entries()) {
       const { digest, ...unsigned } = event;
       if (
@@ -134,6 +160,20 @@ export class EventStore {
         if (event.type !== "change_started" || event.data.change_id !== this.changeId) {
           throw new DesignTraceError("INTEGRITY_ERROR", "Session does not start with the expected Change");
         }
+      } else if (event.type === "plan_revised") {
+        const revision = event.data.plan_revision;
+        const digest = event.data.plan_digest;
+        const requestDigest = event.data.request_digest;
+        if (
+          revision !== planRevision + 1 ||
+          typeof digest !== "string" ||
+          typeof requestDigest !== "string"
+        ) {
+          throw new DesignTraceError("INTEGRITY_ERROR", "Plan revision event is not sequential");
+        }
+        planRevision = revision;
+        planDigest = digest;
+        planRequestDigest = requestDigest;
       } else if (event.type === "state_changed") {
         const from = event.data.from as ChangeState;
         const to = event.data.to as ChangeState;
@@ -145,7 +185,7 @@ export class EventStore {
       }
       previousDigest = digest;
     }
-    return { changeId: this.changeId, state, events };
+    return { changeId: this.changeId, state, planRevision, planDigest, planRequestDigest, events };
   }
 
   private async readEvents(): Promise<SessionEvent[]> {

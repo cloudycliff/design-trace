@@ -17,6 +17,7 @@
     "fixture:test": "node --test fixtures/death-penalty/tests/*.test.mjs"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
     "yaml": "^2.8.1"
   },
   "devDependencies": {

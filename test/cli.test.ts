@@ -33,4 +33,50 @@ test("CLI initializes and reads from the formal ref", async () => {
     { encoding: "utf8", windowsHide: true },
   );
   assert.equal(JSON.parse(shown.stdout).hard.penalty_bps, 1000);
+
+  const begun = await execFileAsync(
+    process.execPath,
+    [
+      cli,
+      "begin",
+      "--data",
+      data,
+      "--project",
+      "death-penalty-fixture",
+      "--request",
+      "普通模式死亡损失从 10% 改为 5%，困难模式保持 10%",
+      "--key",
+      "cli-begin-key",
+    ],
+    { encoding: "utf8", windowsHide: true },
+  );
+  const changeId = JSON.parse(begun.stdout).changeId as string;
+  const planned = await execFileAsync(
+    process.execPath,
+    [
+      cli,
+      "plan",
+      "--data",
+      data,
+      "--project",
+      "death-penalty-fixture",
+      "--change",
+      changeId,
+      "--expected",
+      "0",
+      "--input",
+      fileURLToPath(new URL("../../fixtures/death-penalty/change-plan-draft.json", import.meta.url)),
+      "--key",
+      "cli-plan-key",
+    ],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(JSON.parse(planned.stdout).plan_revision, 1);
+
+  const status = await execFileAsync(
+    process.execPath,
+    [cli, "status", "--data", data, "--project", "death-penalty-fixture", "--change", changeId],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(JSON.parse(status.stdout).state, "awaiting_execution_approval");
 });

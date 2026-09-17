@@ -10,7 +10,7 @@ import { temporaryDirectory } from "./helpers.js";
 test("a session recovers state and idempotent results after restart", async () => {
   const root = await temporaryDirectory("dt-events-");
   const first = new EventStore(root, "CHG-001");
-  await first.start(new Date("2026-09-17T00:00:00Z"));
+  await first.start({}, new Date("2026-09-17T00:00:00Z"));
   await first.transition("awaiting_execution_approval", "plan complete");
   const requestDigest = digestObject({ plan_revision: 1 });
   await first.recordOperation("revise_plan", "key-1", requestDigest, { plan_revision: 1 });
