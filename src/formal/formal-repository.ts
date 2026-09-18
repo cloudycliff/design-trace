@@ -186,6 +186,12 @@ export class FormalRepository {
     return current;
   }
 
+  async assertWriteCompatible(): Promise<string> {
+    const current = await this.currentCommit();
+    await validateFormalTree(this.treeReader(current));
+    return current;
+  }
+
   async rawCurrentCommit(): Promise<string> {
     return git(process.cwd(), ["rev-parse", "--verify", FORMAL_REF], { gitDir: this.repositoryPath });
   }
@@ -195,6 +201,7 @@ export class FormalRepository {
     if (current !== commit) {
       throw new DesignTraceError("INTEGRITY_ERROR", "Cannot verify a commit that is not the formal reference");
     }
+    await validateFormalTree(this.treeReader(commit));
     const metadataPath = path.join(path.dirname(this.repositoryPath), "project.json");
     const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as Record<string, unknown>;
     if (metadata.last_verified_commit !== previousCommit && metadata.last_verified_commit !== commit) {

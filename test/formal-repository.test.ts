@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendFile, copyFile } from "node:fs/promises";
+import { appendFile, copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DesignTraceError } from "../src/core/errors.js";
-import { FormalRepository } from "../src/formal/formal-repository.js";
-import { committedFixture, kernelDirectory } from "./helpers.js";
+import { ChangeSessionService } from "../src/domain/change-session-service.js";
+import { FormalRepository, GitTreeReader } from "../src/formal/formal-repository.js";
+import { git } from "../src/git/git-client.js";
+import { committedFixture, kernelDirectory, temporaryDirectory } from "./helpers.js";
 
 test("initialization creates a reproducible formal ref from a clean commit", async () => {
   const source = await committedFixture();
@@ -80,5 +82,40 @@ test("formal tree rejects duplicate IDs across immutable Markdown records", asyn
   await assert.rejects(
     FormalRepository.initialize(source.root, data, "death-penalty-fixture"),
     (error) => error instanceof DesignTraceError && error.code === "INVALID_PROJECT",
+  );
+});
+
+test("an incompatible formal schema blocks new writes without rewriting compatible history", async () => {
+  const source = await committedFixture();
+  const data = await kernelDirectory();
+  const initialized = await FormalRepository.initialize(source.root, data, "death-penalty-fixture");
+  const projectRoot = path.join(data, "death-penalty-fixture");
+  const workspace = await temporaryDirectory("dt-incompatible-");
+  await git(process.cwd(), ["clone", "--no-checkout", "--no-local", initialized.repositoryPath, workspace]);
+  await git(workspace, ["checkout", "--detach", initialized.formalCommit]);
+  const projectPath = path.join(workspace, "design/project.yaml");
+  await writeFile(projectPath, (await readFile(projectPath, "utf8")).replace("schema_version: 1", "schema_version: 99"));
+  await git(workspace, ["config", "user.name", "Compatibility Test"]);
+  await git(workspace, ["config", "user.email", "compatibility@design-trace.invalid"]);
+  await git(workspace, ["add", "design/project.yaml"]);
+  await git(workspace, ["commit", "-m", "Simulate a future schema"]);
+  const incompatibleCommit = await git(workspace, ["rev-parse", "HEAD"]);
+  await git(process.cwd(), ["fetch", workspace, incompatibleCommit], { gitDir: initialized.repositoryPath });
+  await git(process.cwd(), ["update-ref", "refs/heads/dt-main", incompatibleCommit, initialized.formalCommit], {
+    gitDir: initialized.repositoryPath,
+  });
+  const metadataPath = path.join(projectRoot, "project.json");
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as Record<string, unknown>;
+  await writeFile(metadataPath, `${JSON.stringify({ ...metadata, last_verified_commit: incompatibleCommit }, null, 2)}\n`);
+
+  const service = new ChangeSessionService(projectRoot, "death-penalty-fixture");
+  await assert.rejects(
+    service.beginChange("must not write through an incompatible schema", "future-schema"),
+    (error) => error instanceof DesignTraceError && error.code === "INVALID_PROJECT" && /schema_version 1/u.test(error.message),
+  );
+  assert.equal(await git(process.cwd(), ["cat-file", "-t", initialized.formalCommit], { gitDir: initialized.repositoryPath }), "commit");
+  assert.match(
+    await new GitTreeReader(process.cwd(), initialized.formalCommit, initialized.repositoryPath).readText("design/project.yaml"),
+    /schema_version: 1/u,
   );
 });

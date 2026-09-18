@@ -9,7 +9,7 @@ import { git } from "../git/git-client.js";
 import { workspaceManifestDigest } from "../git/workspace-manifest.js";
 import { GitTreeReader } from "../formal/formal-repository.js";
 import { jsonPointer } from "./reconciliation.js";
-import { loadProjectDefinition, type RegisteredCheck } from "./formal-objects.js";
+import { loadProjectDefinition, type ProjectDefinition, type RegisteredCheck } from "./formal-objects.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,6 +41,19 @@ export interface ValidationBatch {
 export interface ValidationOptions {
   checkIds?: string[];
   parameterExpectations?: Record<string, string | number | boolean>;
+}
+
+export function validationInputManifestDigest(sourceTreeOid: string): string {
+  return digestObject({ source_tree_oid: sourceTreeOid });
+}
+
+export function validationEnvironmentDigest(project: Pick<ProjectDefinition, "environment">): string {
+  return digestObject({
+    platform: process.platform,
+    arch: process.arch,
+    node: process.version,
+    project_environment: project.environment,
+  });
 }
 
 function checkDefinition(check: RegisteredCheck): void {
@@ -81,13 +94,8 @@ export class ValidationService {
     selected.forEach(checkDefinition);
 
     const sourceTreeOid = await reader.treeOid();
-    const inputManifestDigest = digestObject({ source_tree_oid: sourceTreeOid });
-    const environmentDigest = digestObject({
-      platform: process.platform,
-      arch: process.arch,
-      node: process.version,
-      project_environment: project.environment,
-    });
+    const inputManifestDigest = validationInputManifestDigest(sourceTreeOid);
+    const environmentDigest = validationEnvironmentDigest(project);
     const batchId = `BATCH-${randomUUID().toUpperCase()}`;
     const batchRoot = path.join(this.outputRoot, batchId);
     await mkdir(path.join(batchRoot, "sha256"), { recursive: true });

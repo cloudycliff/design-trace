@@ -44,6 +44,8 @@ npm run fixture:test
 
 当前实现范围、验证结果、限制和下一步以
 [`docs/implementation-progress.md`](docs/implementation-progress.md) 为准。
+固定夹具 A01～A22 的逐条自动化证据见
+[`docs/acceptance-status.md`](docs/acceptance-status.md)。
 
 Agent 接入说明及 MCP 配置示例见 [`docs/agent-integration.md`](docs/agent-integration.md)，流程 Skill 位于
 [`skills/design-trace/SKILL.md`](skills/design-trace/SKILL.md)。

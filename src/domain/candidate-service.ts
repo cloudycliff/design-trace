@@ -81,6 +81,7 @@ export class CandidateService {
     attemptId: string,
     idempotencyKey: string,
     now = new Date(),
+    hooks: { afterScopeCheck?: () => void | Promise<void> } = {},
   ): Promise<ExecutionSnapshot> {
     assertRuntimeId(changeId, "CHG");
     assertRuntimeId(attemptId, "ATT");
@@ -169,6 +170,7 @@ export class CandidateService {
         }
 
         const beforeManifest = await workspaceManifestDigest(workspace);
+        await hooks.afterScopeCheck?.();
         await git(workspace, ["reset", "--mixed", plan.baseline_commit]);
         await git(workspace, ["add", "--all"]);
         await git(workspace, ["config", "user.name", "Design Trace Kernel"]);

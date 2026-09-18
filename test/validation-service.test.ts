@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
+import { DesignTraceError } from "../src/core/errors.js";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { ValidationService } from "../src/domain/validation-service.js";
 import { FormalRepository } from "../src/formal/formal-repository.js";
@@ -65,4 +66,50 @@ test("a command that mutates its validation checkout is rejected", async () => {
   assert.equal(batch.runs[0]?.result, "error", log);
   assert.match(batch.runs[0]?.log_digest ?? "", /^[0-9a-f]{64}$/u);
   assert.equal(batch.all_required_passed, false);
+});
+
+test("required unknown, error, timeout, and missing checks cannot pass", async () => {
+  const source = await committedFixture();
+  const projectPath = path.join(source.root, "design/project.yaml");
+  await writeFile(projectPath, `${await readFile(projectPath, "utf8")}
+  - id: CHECK-HUMAN-PENDING
+    version: 1
+    kind: human
+    required: true
+    runner:
+      type: builtin
+      name: operator-recorded
+  - id: CHECK-UNSUPPORTED
+    version: 1
+    kind: structure
+    required: true
+    runner:
+      type: builtin
+      name: unsupported
+  - id: CHECK-TIMEOUT
+    version: 1
+    kind: regression
+    required: true
+    runner:
+      type: command
+      executable: node
+      args:
+        - -e
+        - "setInterval(() => {}, 1000)"
+    timeout_ms: 25
+`);
+  await git(source.root, ["add", "."]);
+  await git(source.root, ["commit", "-m", "Add non-passing validation cases"]);
+  const data = await kernelDirectory();
+  const initialized = await FormalRepository.initialize(source.root, data, "death-penalty-fixture");
+  const validator = new ValidationService(initialized.repositoryPath, await temporaryDirectory("dt-validation-statuses-"));
+  const batch = await validator.run("refs/heads/dt-main", {
+    checkIds: ["CHECK-HUMAN-PENDING", "CHECK-UNSUPPORTED", "CHECK-TIMEOUT"],
+  });
+  assert.deepEqual(batch.runs.map((run) => run.result), ["unknown", "error", "timeout"]);
+  assert.equal(batch.all_required_passed, false);
+  await assert.rejects(
+    validator.run("refs/heads/dt-main", { checkIds: ["CHECK-NOT-REGISTERED"] }),
+    (error) => error instanceof DesignTraceError && error.code === "INVALID_PROJECT",
+  );
 });

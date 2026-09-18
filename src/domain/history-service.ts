@@ -26,6 +26,11 @@ export interface RuleHistoryEntry {
 
 export interface DesignQueryResult {
   formal_commit: string;
+  source_status: {
+    source: "verified_formal_commit";
+    index_status: "not_available";
+    degraded: true;
+  };
   rule_path: string;
   rule: Rule;
   implementation: ReconciliationResult[];
@@ -77,9 +82,11 @@ export class HistoryService {
 
   async queryDesign(ruleId: string, field?: string, revision = FORMAL_REF): Promise<DesignQueryResult> {
     assertObjectId(ruleId, "RULE");
-    const commit = await git(process.cwd(), ["rev-parse", "--verify", `${revision}^{commit}`], {
-      gitDir: this.#repositoryPath,
-    });
+    const commit = revision === FORMAL_REF
+      ? await this.#formalRepository.currentCommit()
+      : await git(process.cwd(), ["rev-parse", "--verify", `${revision}^{commit}`], {
+          gitDir: this.#repositoryPath,
+        });
     const reader = new GitTreeReader(process.cwd(), commit, this.#repositoryPath);
     const objects = await loadFormalObjects(reader);
     const rule = objects.rules.find((candidate) => candidate.id === ruleId);
@@ -97,7 +104,6 @@ export class HistoryService {
     const decisions = objects.decisions.filter((decision) =>
       decisionIds.has(decision.id) && decision.targets.some((target) =>
         target.rule_id === ruleId &&
-        target.rule_version === rule.version &&
         (!field || target.fields.includes(field)),
       ),
     );
@@ -106,6 +112,11 @@ export class HistoryService {
     const request = typeof change?.value.request === "string" ? change.value.request : null;
     return {
       formal_commit: commit,
+      source_status: {
+        source: "verified_formal_commit",
+        index_status: "not_available",
+        degraded: true,
+      },
       rule_path: rulePath,
       rule,
       implementation,

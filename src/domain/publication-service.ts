@@ -16,9 +16,13 @@ import { validateChangePlan, type ChangePlan } from "./change-plan.js";
 import type { ExecutionAttempt } from "./change-session-service.js";
 import type { ContextPackage } from "./context-service.js";
 import type { ExecutionSnapshot } from "./candidate-service.js";
-import { loadFormalObjects } from "./formal-objects.js";
+import { loadFormalObjects, loadProjectDefinition } from "./formal-objects.js";
 import type { PublishedChange, ReviewBundle } from "./review-bundle.js";
-import type { ValidationBatch } from "./validation-service.js";
+import {
+  validationEnvironmentDigest,
+  validationInputManifestDigest,
+  type ValidationBatch,
+} from "./validation-service.js";
 
 const FORMAL_REF = "refs/heads/dt-main";
 
@@ -98,6 +102,11 @@ export class PublicationService {
       const snapshot = await this.readSnapshot(changeId, session.activeSnapshotId);
       const validation = await this.readValidation(session.validationBatchId);
       const context = await this.readContext(changeId, plan.context_id);
+      const snapshotReader = new GitTreeReader(process.cwd(), snapshot.snapshot_commit, this.#repositoryPath);
+      const project = await loadProjectDefinition(snapshotReader);
+      const registeredChecks = new Map((project.checks ?? []).map((check) => [check.id, check]));
+      const expectedInputManifest = validationInputManifestDigest(snapshot.execution_tree_oid);
+      const expectedEnvironment = validationEnvironmentDigest(project);
       if (!session.activeAttemptId) throw new DesignTraceError("INTEGRITY_ERROR", "Validated session has no active attempt");
       const attempt = JSON.parse(await readFile(
         path.join(this.#sessionsRoot, changeId, "attempts", `${session.activeAttemptId}.json`),
@@ -128,6 +137,15 @@ export class PublicationService {
         validation.runs.some((run) => run.source_tree_oid !== snapshot.execution_tree_oid) ||
         validation.runs.length !== expectedChecks.size ||
         validation.runs.some((run) => !expectedChecks.has(run.check_id)) ||
+        validation.runs.some((run) => {
+          const check = registeredChecks.get(run.check_id);
+          return !check ||
+            run.check_version !== check.version ||
+            run.required !== check.required ||
+            run.runner_digest !== digestObject(check.runner) ||
+            run.environment_digest !== expectedEnvironment ||
+            run.input_manifest_digest !== expectedInputManifest;
+        }) ||
         !validation.all_required_passed ||
         validation.runs.some((run) => run.required && run.result !== "passed")
         || attempt.plan_approval_id !== executionApproval.approval_id
@@ -211,7 +229,11 @@ export class PublicationService {
     bundleId: string,
     idempotencyKey: string,
     now = new Date(),
-    hooks: { afterCas?: () => void | Promise<void> } = {},
+    hooks: {
+      beforePrepareCommit?: () => void | Promise<void>;
+      afterCommitPrepared?: () => void | Promise<void>;
+      afterCas?: () => void | Promise<void>;
+    } = {},
   ): Promise<PublishedChange> {
     assertId(changeId, "CHG");
     assertId(bundleId, "BND");
@@ -242,17 +264,20 @@ export class PublicationService {
           throw new DesignTraceError("STALE_BASELINE", "Formal reference moved before publication");
         }
       } else {
-        if (session.state !== "ready_to_commit") {
+        if (session.state !== "ready_to_commit" && session.state !== "committing") {
           throw new DesignTraceError("INVALID_STATE", `Cannot commit Change while it is ${session.state}`);
         }
         if (formalBefore !== bundle.baseline_commit) {
           throw new DesignTraceError("STALE_BASELINE", "Formal reference no longer equals the approved baseline");
         }
-        session = await store.transition("committing", "result approval accepted for publication", now);
+        if (session.state === "ready_to_commit") {
+          session = await store.transition("committing", "result approval accepted for publication", now);
+        }
       }
 
       let candidateCommit = session.preparedCommit;
       if (!candidateCommit) {
+        await hooks.beforePrepareCommit?.();
         candidateCommit = await this.prepareFinalCommit(bundle, approval, now);
         await store.recordCommitPrepared(
           bundleId,
@@ -263,6 +288,7 @@ export class PublicationService {
           now,
         );
         session = await store.recover();
+        await hooks.afterCommitPrepared?.();
       }
 
       try {

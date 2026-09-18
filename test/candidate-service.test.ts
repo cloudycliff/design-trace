@@ -161,3 +161,56 @@ test("validation runs against the frozen snapshot and advances only on required 
   assert.equal(status.state, "awaiting_result_approval");
   assert.equal(status.validationBatchId, validation.batch_id);
 });
+
+test("a changing workspace interrupts snapshot capture and only a new bounded attempt may continue", async () => {
+  const setup = await executingChange();
+  await updateConfig(setup.workspace, (config) => {
+    config.normal.penalty_bps = 500;
+  });
+  await assert.rejects(
+    setup.candidates.freezeCandidate(
+      setup.changeId,
+      setup.attemptId,
+      "racing-freeze",
+      new Date(),
+      {
+        afterScopeCheck: async () => updateConfig(setup.workspace, (config) => {
+          config.hard.penalty_bps = 500;
+        }),
+      },
+    ),
+    (error) => error instanceof DesignTraceError && error.code === "CONTENT_CHANGED",
+  );
+  assert.equal((await setup.sessions.getStatus(setup.changeId)).state, "interrupted");
+
+  const second = await setup.sessions.startExecution(setup.changeId, "second-attempt");
+  assert.equal(second.attempt_number, 2);
+  await assert.rejects(
+    setup.candidates.freezeCandidate(setup.changeId, setup.attemptId, "old-attempt"),
+    (error) => error instanceof DesignTraceError && error.code === "INVALID_STATE",
+  );
+  await updateConfig(path.join(setup.projectRoot, "execution", second.attempt_id), (config) => {
+    config.normal.penalty_bps = 500;
+    config.hard.penalty_bps = 500;
+  });
+  await assert.rejects(
+    setup.candidates.freezeCandidate(setup.changeId, second.attempt_id, "second-freeze"),
+    (error) => error instanceof DesignTraceError && error.code === "SCOPE_VIOLATION",
+  );
+
+  const third = await setup.sessions.startExecution(setup.changeId, "third-attempt");
+  assert.equal(third.attempt_number, 3);
+  await updateConfig(path.join(setup.projectRoot, "execution", third.attempt_id), (config) => {
+    config.normal.penalty_bps = 500;
+    config.hard.penalty_bps = 500;
+  });
+  await assert.rejects(
+    setup.candidates.freezeCandidate(setup.changeId, third.attempt_id, "third-freeze"),
+    (error) => error instanceof DesignTraceError && error.code === "SCOPE_VIOLATION",
+  );
+  await assert.rejects(
+    setup.sessions.startExecution(setup.changeId, "fourth-attempt"),
+    (error) => error instanceof DesignTraceError && error.code === "INVALID_STATE" && /budget/u.test(error.message),
+  );
+  assert.equal((await setup.sessions.getStatus(setup.changeId)).state, "blocked");
+});

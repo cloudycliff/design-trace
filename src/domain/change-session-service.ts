@@ -105,7 +105,7 @@ export class ChangeSessionService {
         }
       }
 
-      const baselineCommit = await this.#formalRepository.currentCommit();
+      const baselineCommit = await this.#formalRepository.assertWriteCompatible();
       await store.start({
         project_id: this.projectId,
         request,
@@ -270,7 +270,7 @@ export class ChangeSessionService {
         await store.recordOperation("start_execution", idempotencyKey, requestDigest, recovered, now);
         return recovered;
       }
-      if (session.state !== "ready_to_execute" && session.state !== "blocked") {
+      if (session.state !== "ready_to_execute" && session.state !== "blocked" && session.state !== "interrupted") {
         if (!session.executionApprovalId) {
           throw new DesignTraceError("APPROVAL_REQUIRED", "Execution cannot start without operator approval");
         }
@@ -284,6 +284,9 @@ export class ChangeSessionService {
       const baselineCommit = String(first.data.baseline_commit);
       if (await this.#formalRepository.currentCommit() !== baselineCommit) {
         throw new DesignTraceError("STALE_BASELINE", "Cannot start an execution attempt from a stale formal baseline");
+      }
+      if (session.state === "interrupted") {
+        session = await store.transition("blocked", "interrupted attempt acknowledged for recovery", now);
       }
       if (session.state === "blocked") {
         session = await store.transition("ready_to_execute", "authorized repair attempt requested", now);

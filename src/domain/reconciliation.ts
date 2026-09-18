@@ -46,7 +46,16 @@ export async function reconcileBinding(
     binding_id: binding.id,
     binding_version: binding.version,
   };
+  if (project.extraction_coverage?.kind !== "json-pointer") {
+    return { ...base, status: "unknown", reasons: ["unsupported_extraction_coverage"] };
+  }
   if (!covered) return { ...base, status: "unknown", reasons: ["path_outside_extraction_coverage"] };
+  if (binding.environment !== project.environment) {
+    return { ...base, status: "unknown", reasons: ["environment_mismatch"] };
+  }
+  if (binding.rule_field.endsWith("_bps") && binding.unit !== "bps") {
+    return { ...base, status: "unknown", reasons: ["unit_mismatch"] };
+  }
   if (binding.rule_id !== rule.id || binding.comparator !== "exact") {
     return { ...base, status: "unknown", reasons: ["unsupported_binding"] };
   }

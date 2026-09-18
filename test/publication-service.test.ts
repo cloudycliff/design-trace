@@ -104,6 +104,23 @@ test("formal publication requires a result approval bound to the review bundle",
   assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), setup.baseline);
 });
 
+test("result review rejects validation evidence from a different environment", async () => {
+  const setup = await validatedChange();
+  const status = await setup.sessions.getStatus(setup.changeId);
+  assert.ok(status.validationBatchId);
+  const batchPath = path.join(setup.projectRoot, "validation", status.validationBatchId, "batch.json");
+  const batch = JSON.parse(await readFile(batchPath, "utf8")) as {
+    runs: Array<{ environment_digest: string }>;
+  };
+  batch.runs[0]!.environment_digest = "0".repeat(64);
+  await writeFile(batchPath, `${JSON.stringify(batch, null, 2)}\n`);
+  await assert.rejects(
+    setup.publications.buildResultReview(setup.changeId, "tampered-environment"),
+    (error) => error instanceof DesignTraceError && error.code === "VALIDATION_FAILED",
+  );
+  assert.equal((await setup.sessions.getStatus(setup.changeId)).state, "awaiting_result_approval");
+});
+
 test("result review uses the protected loopback channel and cannot approve another bundle", async () => {
   const setup = await validatedChange();
   const bundle = await setup.publications.buildResultReview(setup.changeId, "bundle-key");
@@ -218,6 +235,67 @@ test("response loss after CAS recovers the one prepared official commit", async 
     bundle.bundle_id,
     "commit-key",
     new Date(publicationTime.getTime() + 48 * 60 * 60 * 1000),
+  );
+  assert.equal(recovered.commit, interrupted.preparedCommit);
+  assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), recovered.commit);
+  assert.equal((await setup.sessions.getStatus(setup.changeId)).state, "applied");
+});
+
+test("interruption before final commit creation resumes from committing", async () => {
+  const setup = await validatedChange();
+  const bundle = await setup.publications.buildResultReview(setup.changeId, "bundle-key");
+  await approveResult(setup.authority, setup.changeId, bundle.bundle_id);
+  const publicationTime = new Date();
+  await assert.rejects(
+    setup.publications.commitChange(
+      setup.changeId,
+      bundle.bundle_id,
+      "commit-key",
+      publicationTime,
+      { beforePrepareCommit: () => { throw new Error("simulated interruption before commit creation"); } },
+    ),
+    /before commit creation/u,
+  );
+  const interrupted = await setup.sessions.getStatus(setup.changeId);
+  assert.equal(interrupted.state, "committing");
+  assert.equal(interrupted.preparedCommit, null);
+  assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), setup.baseline);
+
+  const recovered = await setup.publications.commitChange(
+    setup.changeId,
+    bundle.bundle_id,
+    "commit-key",
+    publicationTime,
+  );
+  assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), recovered.commit);
+  assert.equal((await setup.sessions.getStatus(setup.changeId)).state, "applied");
+});
+
+test("interruption after final commit preparation resumes before CAS without duplicating publication", async () => {
+  const setup = await validatedChange();
+  const bundle = await setup.publications.buildResultReview(setup.changeId, "bundle-key");
+  await approveResult(setup.authority, setup.changeId, bundle.bundle_id);
+  const publicationTime = new Date();
+  await assert.rejects(
+    setup.publications.commitChange(
+      setup.changeId,
+      bundle.bundle_id,
+      "commit-key",
+      publicationTime,
+      { afterCommitPrepared: () => { throw new Error("simulated interruption before CAS"); } },
+    ),
+    /before CAS/u,
+  );
+  const interrupted = await setup.sessions.getStatus(setup.changeId);
+  assert.equal(interrupted.state, "committing");
+  assert.ok(interrupted.preparedCommit);
+  assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), setup.baseline);
+
+  const recovered = await setup.publications.commitChange(
+    setup.changeId,
+    bundle.bundle_id,
+    "commit-key",
+    new Date(publicationTime.getTime() + 1_000),
   );
   assert.equal(recovered.commit, interrupted.preparedCommit);
   assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), recovered.commit);

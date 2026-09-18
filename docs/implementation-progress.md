@@ -2,7 +2,7 @@
 
 > 最后更新：2026-09-18
 > 设计基线：`design-trace-architecture-and-roadmap.md` v0.7  
-> 当前结论：T01～T08 的工程纵向切片已在固定夹具上连通；MCP 不具备签批能力，流程 Skill 保留两次独立操作员批准。尚未完成真实项目连续试用，因此未达到个人 MVP 退出条件。
+> 当前结论：T01～T08 的工程纵向切片与 A01～A22 固定夹具验收已连通；MCP 不具备签批能力，流程 Skill 保留两次独立操作员批准。尚未完成真实项目连续试用，因此未达到个人 MVP 退出条件。逐条证据见 `acceptance-status.md`。
 
 ## 范围说明
 
@@ -14,7 +14,7 @@
 - 单用户、Windows 本地、单 Git 仓库、单 JSON 配置。
 - 只实现目标先行流程的基础设施，不实现“修改后接管”。
 - 正式查询固定读取内核管理的 `refs/heads/dt-main`。
-- 没有实现可信审批通道前，不接入 Agent 自动执行和正式发布。
+- Agent 接入只复用已验证的领域服务；可信审批继续由独立 loopback 操作员通道承担。
 
 ## 已完成
 
@@ -44,8 +44,10 @@
 - 从指定 Git commit 加载 Rule、Binding、Relation、Evidence 与项目检查注册表，不读取可变工作区。
 - 生成带 `source_tree_oid` 和稳定 `context_digest` 的上下文包。
 - 实现显式关系的一层传播；仅将来源可靠、已验证、两端版本匹配且证据存在的关系列为确定影响。
+- 支持最多二层关系展开；二层结果始终降级为可能影响，循环由 visited 集合终止并显式报告。
 - 将未验证、版本过期或证据缺失的关系降级为可能影响，并明确列出覆盖缺口。
 - 实现 JSON Pointer 提取与 Rule/Binding 精确对账，区分 `consistent`、`conflict`、`design_only` 和 `unknown`。
+- 提取覆盖类型、环境或单位不匹配时明确返回 `unknown`，不误报一致。
 - 实现结构、参数、命令回归及人工检查结果模型；required 非 `passed` 时批次不能通过。
 - 验证批次持久化到运行目录；每条结果绑定 Git tree、输入清单摘要、运行器摘要、环境摘要和内容寻址日志。
 - 命令验证在独立 clone 中运行；验证期间修改输入会被判为错误。
@@ -86,6 +88,7 @@
 - 最终树只在 payload 上追加结果 Approval 和包含完整 ReviewBundle 的确定性回执；最终 commit 直接以计划基线为父提交。
 - 发布前写入 `commit_prepared`，再使用 `git update-ref <ref> <new> <old>` 完成 compare-and-swap；基线被推进时返回 `STALE_BASELINE` 且不覆盖竞争引用。
 - CAS 已成功但响应或 applied 事件丢失时，根据准备记录和正式引用恢复同一个 commit，不重复创建正式结果。
+- commit 创建前、commit 已准备但 CAS 前、CAS 后响应丢失三个中断点均支持重试恢复。
 - `build-result-review` 与 `commit-change` 支持幂等键；CLI 新增 `build-result-review`、`review-result` 和 `commit-change`。
 
 ### T07 历史查询与补偿回退（固定夹具切片）
@@ -114,10 +117,12 @@
 - `project.json` 保存最后一次合法发布 commit；正式查询和新 Change 会拒绝没有合法发布记录的外部 `dt-main` 移动。
 - CAS 成功后先推进可恢复的验证账本，再写 applied 事件；响应丢失恢复仍使用 raw ref 核对准备记录。
 - 正式发布前校验完整文件树：基础 Rule/Binding 一致性、Markdown ID 唯一性、Change、计划、上下文摘要、Approval、ReviewBundle/回执引用和内容寻址日志。
+- 发布前重新核对验证的输入清单、检查版本、runner、环境、结果和日志，拒绝跨环境或跨检查复用报告。
 - 历史目录执行追加式检查，既有 Change、Decision、Evidence、Approval、Receipt、Plan、Context 与 artifact 不允许被修改或删除。
 - 项目锁会识别仍存活的持有进程，并安全清理由已退出进程遗留的锁；损坏或无法判定的锁不会被静默删除。
 - 提供不包含操作员密钥的校验式备份与恢复；manifest 覆盖 bare repository、会话、验证证据和项目元数据，恢复后未使用批准因密钥轮换而失效。
 - 操作员审查页支持明确拒绝并取消 Change，不生成 Approval。
+- 不兼容正式 Schema 会阻止新 Change 写入；已有 Git 历史原件仍保持可读和可恢复。
 
 ## 当前验证结果
 
@@ -125,19 +130,19 @@
 
 | 命令 | 结果 | 覆盖 |
 |---|---:|---|
-| `npm test` | 45 通过 | T08 MCP/Skill 边界、T07 历史/回退、理由来源约束、备份恢复、外部引用检测、陈旧锁恢复、正式 ID 校验和审查拒绝，以及既有测试 |
+| `npm test` | 55 通过 | A01～A22 固定夹具证据，包括三阶段发布恢复、证据绑定、二层关系/循环、对账降级、Schema 兼容门、重试预算，以及既有测试 |
 | `npm run fixture:test` | 10 通过 | 0、1、19、100、101 金币在普通/困难模式下按配置值向下取整的程序行为 |
 
-这些测试只覆盖当前切片，不代表第 15.1 节 A01～A22 已全部通过。
+逐条映射见 `docs/acceptance-status.md`。这些结果证明固定夹具上的 mandatory 工程验收，不代表真实项目试用或产品收益已经成立。
 
 ## 尚未完成与已知限制
 
 - T01 / 阶段 0：缺少真实项目、真实初始 commit、稳定程序入口、原有测试和用户确认的业务含义。
 - T02：正式对象已有跨类型 ID、引用及关键字段校验，但尚未为每类对象建立独立的完整 JSON Schema；部分维护类写接口不使用业务幂等键。
-- T03：当前只支持一层关系和显式 JSON Binding；尚未接入 Change 的候选快照、计划派生期望值、人工 Evidence 录入及二层“可能影响”。
+- T03：候选快照、计划派生期望值、二层“可能影响”与循环终止已实现；尚未提供操作员人工 Evidence 录入界面。
 - T04：execution 与 result 两阶段批准及拒绝/取消已实现；浏览器会话仍为进程内状态，服务重启后需重新打开待审查页面建立会话。
-- T05：尚未接入真实 Agent 进程生命周期、停止确认、修复重试与候选 Rule 自动生成；当前仅支持计划明确列出的既有 JSON 文件。
-- T06：当前按首个 JSON/Rule 夹具生成正式对象；尚未覆盖通用 Rule 字段变更、完整对象 Schema、索引重建失败状态和所有 commit 创建前中断点。
+- T05：中断恢复、最多三次修复尝试及旧 attempt 拒绝已实现；尚未接入真实 Agent 子进程生命周期/停止确认与候选 Rule 自动生成，当前仅支持计划明确列出的既有 JSON 文件。
+- T06：当前按首个 JSON/Rule 夹具生成正式对象；三类 commit 中断点已覆盖，尚未覆盖通用 Rule 字段变更、每类对象的穷尽式 Schema 和持久化索引重建。
 - T07：已支持随 Change 发布用户理由及字段级 Decision；尚无脱离 Change 的独立 Decision 讨论流程，依赖冲突当前覆盖目标配置与 Rule 字段的后续变化。
 - T08：MCP 与流程 Skill 已实现；两个自动化夹具迭代已覆盖修改与回退，但真实项目连续试用及使用成本指标仍需真实项目输入。
 - 当前 YAML/JSON 校验覆盖正式发布所需关键字段和引用，但还不是每类对象的穷尽式 JSON Schema。
@@ -145,16 +150,15 @@
 
 ## 下一步开发顺序
 
-1. 收尾 T02：补齐正式对象 Schema、批准失效事件、陈旧锁安全恢复和统一操作幂等包装。
-2. 收尾 T03：补齐候选期望值并把 ValidationRun 接入 Change 事件链。
-3. 收尾 T04：增加退回/取消、操作员会话恢复与批准异常恢复。
-4. 补齐 Mandatory 工程验收中尚未覆盖的兼容性、索引降级和更多进程中断点。
-5. 收尾穷尽式对象 Schema、通用 Rule 变更和真实 Agent 进程生命周期。
-6. 获得真实试点资料后执行两个连续迭代并补写阶段 0/3 记录；在此之前不宣称个人 MVP 完成。
+1. 获取真实试点仓库、初始 commit、测试命令、约 10 条 Rule 与用户确认的业务语义，补写阶段 0 记录。
+2. 在真实项目执行两个连续迭代，包含一次退回重试、一次补偿回退和一次故意越界，并记录产品指标。
+3. 根据试用证据决定是否投入人工 Evidence 界面、持久化索引、通用 Rule 字段/多格式适配和真实 Agent 子进程托管。
+4. 分发前再补齐每类正式对象的穷尽式 Schema、升级迁移流程与插件 manifest；这些不是当前固定夹具闭环的阻塞项。
 
 ## 后续接手入口
 
 - 产品与安全契约：`docs/design-trace-architecture-and-roadmap.md`
+- Mandatory 验收矩阵：`docs/acceptance-status.md`
 - 当前状态：本文
 - 状态机：`src/core/state-machine.ts`
 - 恢复与幂等原型：`src/core/event-store.ts`

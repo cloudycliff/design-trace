@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DesignTraceError } from "../src/core/errors.js";
 import { CandidateService } from "../src/domain/candidate-service.js";
@@ -10,6 +10,7 @@ import { HistoryService } from "../src/domain/history-service.js";
 import { PublicationService } from "../src/domain/publication-service.js";
 import { FormalRepository, GitTreeReader } from "../src/formal/formal-repository.js";
 import { parseFrontmatter } from "../src/formal/frontmatter.js";
+import { git } from "../src/git/git-client.js";
 import { ApprovalAuthority } from "../src/operator/approval-authority.js";
 import { committedFixture, kernelDirectory } from "./helpers.js";
 
@@ -38,7 +39,7 @@ function updateDraft(before: number, after: number, request: string): ChangePlan
   };
 }
 
-async function initializedProject(): Promise<{
+async function initializedProject(sourceOverride?: { root: string; commit: string }): Promise<{
   projectRoot: string;
   repositoryPath: string;
   sessions: ChangeSessionService;
@@ -46,7 +47,7 @@ async function initializedProject(): Promise<{
   publications: PublicationService;
   history: HistoryService;
 }> {
-  const source = await committedFixture();
+  const source = sourceOverride ?? await committedFixture();
   const data = await kernelDirectory();
   const initialized = await FormalRepository.initialize(source.root, data, projectId);
   const projectRoot = path.join(data, projectId);
@@ -105,6 +106,11 @@ test("history query reports current source, unknown rationale and immutable Rule
   const published = await planAndPublish(setup, updateDraft(1000, 500, "普通模式死亡损失改为 5%"), "first");
   const query = await setup.history.queryDesign("RULE-DEATH-NORMAL", "parameters.penalty_bps");
   assert.equal(query.formal_commit, published.commit);
+  assert.deepEqual(query.source_status, {
+    source: "verified_formal_commit",
+    index_status: "not_available",
+    degraded: true,
+  });
   assert.equal(query.rule.version, 2);
   assert.equal(query.rule.parameters.penalty_bps, 500);
   assert.equal(query.implementation[0]?.status, "consistent");
@@ -112,6 +118,41 @@ test("history query reports current source, unknown rationale and immutable Rule
   assert.equal(query.current_reason.change_id, published.changeId);
   assert.equal(query.current_reason.request, "普通模式死亡损失改为 5%");
   assert.deepEqual(query.history.map((entry) => entry.version), [2, 1]);
+});
+
+test("formal query ignores unapproved execution changes and rejects an unverified formal ref", async () => {
+  const setup = await initializedProject();
+  const begun = await setup.sessions.beginChange("unapproved local edit", "unapproved-begin");
+  const plan = await setup.sessions.revisePlan(
+    begun.changeId,
+    0,
+    updateDraft(1000, 500, "unapproved local edit"),
+    "unapproved-plan",
+  );
+  const review = await setup.authority.prepareExecutionReview(begun.changeId);
+  const pending = await setup.authority.getOperatorReview(review.review_id);
+  await setup.authority.approveExecution(review.review_id, pending.nonce, "query-test");
+  const attempt = await setup.sessions.startExecution(begun.changeId, "unapproved-attempt");
+  const workspace = path.join(setup.projectRoot, "execution", attempt.attempt_id);
+  const configPath = path.join(workspace, "config/death-penalty.json");
+  const config = JSON.parse(await readFile(configPath, "utf8")) as { normal: { penalty_bps: number } };
+  config.normal.penalty_bps = Number(plan.allowed_config_changes[0]!.after);
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+  const query = await setup.history.queryDesign("RULE-DEATH-NORMAL", "parameters.penalty_bps");
+  assert.equal(query.rule.parameters.penalty_bps, 1000);
+  assert.equal(query.implementation[0]?.observed, 1000);
+  assert.equal(query.source_status.degraded, true);
+
+  const baseline = query.formal_commit;
+  const externalCommit = await git(process.cwd(), ["rev-parse", `${baseline}^`], { gitDir: setup.repositoryPath });
+  await git(process.cwd(), ["update-ref", "refs/heads/dt-main", externalCommit, baseline], {
+    gitDir: setup.repositoryPath,
+  });
+  await assert.rejects(
+    setup.history.queryDesign("RULE-DEATH-NORMAL"),
+    (error) => error instanceof DesignTraceError && error.code === "INTEGRITY_ERROR",
+  );
 });
 
 test("a compensation Change restores business state while preserving history", async () => {
@@ -160,4 +201,58 @@ test("revert proposal rejects target fields changed by a later Change", async ()
     (error) => error instanceof DesignTraceError && error.code === "REVERT_CONFLICT" &&
       Array.isArray(error.details.conflicts) && error.details.conflicts.length > 0,
   );
+});
+
+test("partial Decision supersession retains the rationale for unaffected fields", async () => {
+  const source = await committedFixture();
+  const rulePath = path.join(source.root, "design/rules/death-normal.md");
+  const rule = await readFile(rulePath, "utf8");
+  await writeFile(rulePath, rule.replace(
+    "decision_bindings: []",
+    "decision_bindings:\n  - decision_id: DEC-INITIAL-NORMAL\n    fields:\n      - parameters.penalty_bps\n      - statement",
+  ));
+  await mkdir(path.join(source.root, "design/decisions"), { recursive: true });
+  await writeFile(path.join(source.root, "design/decisions/initial-normal.md"), `---
+schema_version: 1
+id: DEC-INITIAL-NORMAL
+targets:
+  - rule_id: RULE-DEATH-NORMAL
+    rule_version: 1
+    fields:
+      - parameters.penalty_bps
+      - statement
+decision: Initial normal-mode death penalty wording and value
+rationale: Original product rule
+rationale_source: user_statement
+evidence_ids: []
+alternatives: unknown
+supersedes: []
+created_at: 2026-09-17T00:00:00Z
+---
+
+# Initial normal-mode rationale
+`);
+  await git(source.root, ["add", "."]);
+  await git(source.root, ["commit", "-m", "Record initial multi-field decision"]);
+  source.commit = await git(source.root, ["rev-parse", "HEAD"]);
+
+  const setup = await initializedProject(source);
+  const revisedDraft: ChangePlanDraft = {
+    ...updateDraft(1000, 500, "普通模式死亡损失改为 5%"),
+    reason: "降低普通模式早期挫败感",
+    reason_source: "user_statement",
+  };
+  await planAndPublish(setup, revisedDraft, "partial-supersession");
+
+  const penalty = await setup.history.queryDesign("RULE-DEATH-NORMAL", "parameters.penalty_bps");
+  assert.equal(penalty.current_reason.decisions.length, 1);
+  assert.notEqual(penalty.current_reason.decisions[0]?.id, "DEC-INITIAL-NORMAL");
+  assert.deepEqual(penalty.current_reason.decisions[0]?.supersedes, [{
+    decision_id: "DEC-INITIAL-NORMAL",
+    rule_id: "RULE-DEATH-NORMAL",
+    fields: ["parameters.penalty_bps"],
+  }]);
+
+  const statement = await setup.history.queryDesign("RULE-DEATH-NORMAL", "statement");
+  assert.deepEqual(statement.current_reason.decisions.map((decision) => decision.id), ["DEC-INITIAL-NORMAL"]);
 });

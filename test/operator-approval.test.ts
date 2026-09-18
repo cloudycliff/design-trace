@@ -91,8 +91,8 @@ test("operator approval is bound to plan/context and authorizes one recoverable 
   assert.equal((await service.getStatus(changeId)).state, "executing");
 });
 
-test("tampered and expired approvals are rejected", async () => {
-  const { projectRoot, authority, changeId } = await plannedChange();
+test("tampered and expired approvals are rejected without starting execution", async () => {
+  const { projectRoot, service, authority, changeId } = await plannedChange();
   const review = await authority.prepareExecutionReview(changeId);
   const operatorReview = await authority.getOperatorReview(review.review_id);
   const approval = await authority.approveExecution(
@@ -105,6 +105,11 @@ test("tampered and expired approvals are rejected", async () => {
     authority.requireValidExecutionApproval(changeId, new Date("2026-09-18T00:00:01Z")),
     (error) => error instanceof DesignTraceError && error.code === "APPROVAL_EXPIRED",
   );
+  await assert.rejects(
+    service.startExecution(changeId, "expired-attempt", new Date("2026-09-18T00:00:01Z")),
+    (error) => error instanceof DesignTraceError && error.code === "APPROVAL_EXPIRED",
+  );
+  assert.equal((await service.getStatus(changeId)).state, "ready_to_execute");
 
   const approvalPath = path.join(
     projectRoot,
