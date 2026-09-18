@@ -107,6 +107,22 @@ test("stale revisions and unsafe paths are rejected without advancing the plan",
   assert.equal((await service.getStatus(begun.changeId)).planRevision, 1);
 });
 
+test("user-stated reasons require an explicit source", async () => {
+  const { service } = await initializedService();
+  const begun = await service.beginChange(planDraft.request, "begin-key");
+  await assert.rejects(
+    service.revisePlan(begun.changeId, 0, { ...planDraft, reason: "降低早期挫败感" }, "plan-key"),
+    (error) => error instanceof DesignTraceError && error.code === "INVALID_PROJECT",
+  );
+  const plan = await service.revisePlan(
+    begun.changeId,
+    0,
+    { ...planDraft, reason: "降低早期挫败感", reason_source: "user_statement" },
+    "reasoned-plan-key",
+  );
+  assert.equal(plan.reason_source, "user_statement");
+});
+
 test("caller cannot override kernel-owned plan identity or baseline", async () => {
   const { service } = await initializedService();
   const begun = await service.beginChange(planDraft.request, "begin-key");

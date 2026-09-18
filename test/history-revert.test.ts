@@ -144,6 +144,11 @@ test("a compensation Change restores business state while preserving history", a
   ).revert_of, original.changeId);
   assert.ok((await reader.listFiles()).some((file) => file.path === `design/changes/${original.changeId}.md`));
   assert.deepEqual((await setup.history.getHistory("RULE-DEATH-NORMAL")).map((entry) => entry.version), [3, 2, 1]);
+  const query = await setup.history.queryDesign("RULE-DEATH-NORMAL", "parameters.penalty_bps");
+  assert.equal(query.current_reason.status, "known");
+  assert.equal(query.current_reason.change_reason, `回退 ${original.changeId}`);
+  assert.equal(query.current_reason.decisions.length, 1);
+  assert.equal(query.current_reason.decisions[0]?.rationale_source, "user_statement");
 });
 
 test("revert proposal rejects target fields changed by a later Change", async () => {

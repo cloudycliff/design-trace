@@ -93,6 +93,7 @@
 - 当前设计查询固定读取 `dt-main`，返回 Rule、字段绑定对账、正式 commit、当前 Change 理由、适用 Decision 和来源路径。
 - Rule 历史直接遍历正式 Git 提交，保留各版本、关联 Change、理由及时间；理由缺失时明确返回 `unknown`。
 - Decision 加载支持字段级 target、Rule 的 `decision_bindings` 和带范围的 `supersedes` 数据结构，不按最新记录猜测当前理由。
+- ChangePlan 可选记录成对的 `reason`/`reason_source`；存在用户原话理由时，发布会生成字段级 Decision、更新 Rule 绑定并保留被取代范围，没有理由时继续明确记录 `unknown`。
 - `propose-revert` 从正式 Change、回执中的 ReviewBundle 和原计划生成当前基线上的新 `kind: revert` 计划，反转精确 JSON Pointer 差异。
 - 回退不删除旧 Change、批准、证据或回执；重新执行完整的计划批准、候选验证、结果批准和 CAS 发布，Rule 版本继续递增。
 - 若目标配置字段或对应 Rule 字段被后续 Change 修改，返回 `REVERT_CONFLICT` 及精确冲突位置，不自动合并或机械 `git revert`。
@@ -124,7 +125,7 @@
 
 | 命令 | 结果 | 覆盖 |
 |---|---:|---|
-| `npm test` | 44 通过 | T08 MCP/Skill 边界、T07 历史/回退、备份恢复、外部引用检测、陈旧锁恢复、正式 ID 校验和审查拒绝，以及既有测试 |
+| `npm test` | 45 通过 | T08 MCP/Skill 边界、T07 历史/回退、理由来源约束、备份恢复、外部引用检测、陈旧锁恢复、正式 ID 校验和审查拒绝，以及既有测试 |
 | `npm run fixture:test` | 10 通过 | 0、1、19、100、101 金币在普通/困难模式下按配置值向下取整的程序行为 |
 
 这些测试只覆盖当前切片，不代表第 15.1 节 A01～A22 已全部通过。
@@ -137,7 +138,7 @@
 - T04：execution 与 result 两阶段批准及拒绝/取消已实现；浏览器会话仍为进程内状态，服务重启后需重新打开待审查页面建立会话。
 - T05：尚未接入真实 Agent 进程生命周期、停止确认、修复重试与候选 Rule 自动生成；当前仅支持计划明确列出的既有 JSON 文件。
 - T06：当前按首个 JSON/Rule 夹具生成正式对象；尚未覆盖通用 Rule 字段变更、完整对象 Schema、索引重建失败状态和所有 commit 创建前中断点。
-- T07：已支持字段级 Decision 读取和 unknown 理由，但尚无单独的 Decision 提案/录入流程；依赖冲突当前覆盖目标配置与 Rule 字段的后续变化。
+- T07：已支持随 Change 发布用户理由及字段级 Decision；尚无脱离 Change 的独立 Decision 讨论流程，依赖冲突当前覆盖目标配置与 Rule 字段的后续变化。
 - T08：MCP 与流程 Skill 已实现；两个自动化夹具迭代已覆盖修改与回退，但真实项目连续试用及使用成本指标仍需真实项目输入。
 - 当前 YAML/JSON 校验覆盖正式发布所需关键字段和引用，但还不是每类对象的穷尽式 JSON Schema。
 - 文件锁支持跨进程互斥及死亡 PID 恢复；网络文件系统及 PID 极端复用场景尚未验证。

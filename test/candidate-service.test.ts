@@ -120,6 +120,10 @@ test("scope checker rejects protected JSON fields and undeclared files", async (
     (error) => error instanceof DesignTraceError && error.code === "SCOPE_VIOLATION",
   );
   assert.equal((await protectedSetup.sessions.getStatus(protectedSetup.changeId)).state, "blocked");
+  const retry = await protectedSetup.sessions.startExecution(protectedSetup.changeId, "repair-attempt-key");
+  assert.notEqual(retry.attempt_id, protectedSetup.attemptId);
+  assert.equal(retry.attempt_number, 2);
+  assert.equal((await protectedSetup.sessions.getStatus(protectedSetup.changeId)).state, "executing");
 
   const fileSetup = await executingChange();
   await updateConfig(fileSetup.workspace, (config) => {

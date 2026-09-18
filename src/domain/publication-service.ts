@@ -136,7 +136,7 @@ export class PublicationService {
         await git(process.cwd(), ["clone", "--no-checkout", "--no-local", this.#repositoryPath, workspace]);
         await git(workspace, ["fetch", this.#repositoryPath, `+refs/dt/snapshots/${changeId}/${snapshot.attempt_id}:refs/dt/source-snapshot`]);
         await git(workspace, ["checkout", "--detach", snapshot.snapshot_commit]);
-        const rulePaths = await this.applyFormalRuleChanges(workspace, plan, changeId);
+        const designPaths = await this.applyFormalRuleChanges(workspace, plan, changeId, now);
         const recordPaths = await this.writePayloadRecords(
           workspace,
           changeId,
@@ -178,7 +178,7 @@ export class PublicationService {
           policy_digest: digestObject({ policy_version: plan.policy_version }),
           policy_version: plan.policy_version,
           execution_approval_id: executionApproval.approval_id,
-          changed_paths: [...new Set([...snapshot.changed_paths, ...rulePaths, ...recordPaths])].sort(),
+          changed_paths: [...new Set([...snapshot.changed_paths, ...designPaths, ...recordPaths])].sort(),
           changed_pointers: snapshot.changed_pointers,
           built_at: now.toISOString(),
         };
@@ -362,17 +362,25 @@ export class PublicationService {
     }
   }
 
-  private async applyFormalRuleChanges(workspace: string, plan: ChangePlan, changeId: string): Promise<string[]> {
+  private async applyFormalRuleChanges(
+    workspace: string,
+    plan: ChangePlan,
+    changeId: string,
+    now: Date,
+  ): Promise<string[]> {
     const reader = new GitTreeReader(workspace, "HEAD");
     const objects = await loadFormalObjects(reader);
     const files = await reader.listFiles();
-    const changedRulePaths: string[] = [];
+    const changedDesignPaths: string[] = [];
     for (const designChange of plan.design_changes) {
       const matchingPath = await this.findRulePath(reader, files.map((file) => file.path), designChange.rule_id);
       if (!matchingPath) throw new DesignTraceError("INVALID_PROJECT", `Cannot find Rule ${designChange.rule_id}`);
       const absolute = path.join(workspace, ...matchingPath.split("/"));
       const source = await readFile(absolute, "utf8");
       const frontmatter = parseFrontmatter(source, matchingPath);
+      const previousBindings = Array.isArray(frontmatter.decision_bindings)
+        ? frontmatter.decision_bindings as Array<{ decision_id: string; fields: string[] }>
+        : [];
       for (const field of designChange.fields) {
         const match = /^parameters\.(.+)$/u.exec(field);
         if (!match?.[1]) throw new DesignTraceError("UNSUPPORTED_RESOURCE", `Unsupported Rule field: ${field}`);
@@ -396,11 +404,54 @@ export class PublicationService {
       }
       frontmatter.version = Number(frontmatter.version) + 1;
       frontmatter.last_change_id = changeId;
+      if (plan.reason && plan.reason_source) {
+        const decisionId = `DEC-${digestObject({ change_id: changeId, rule_id: designChange.rule_id })
+          .slice(0, 20).toUpperCase()}`;
+        const replacedFields = new Set(designChange.fields);
+        const retainedBindings = previousBindings
+          .map((binding) => ({ ...binding, fields: binding.fields.filter((field) => !replacedFields.has(field)) }))
+          .filter((binding) => binding.fields.length > 0);
+        frontmatter.decision_bindings = [
+          ...retainedBindings,
+          { decision_id: decisionId, fields: designChange.fields },
+        ];
+        const supersedes = previousBindings.flatMap((binding) => {
+          const fields = binding.fields.filter((field) => replacedFields.has(field));
+          return fields.length > 0 ? [{ decision_id: binding.decision_id, rule_id: designChange.rule_id, fields }] : [];
+        });
+        const decisionPath = `design/decisions/${decisionId}.md`;
+        await mkdir(path.join(workspace, "design", "decisions"), { recursive: true });
+        await writeFile(
+          path.join(workspace, ...decisionPath.split("/")),
+          markdown(
+            {
+              schema_version: 1,
+              id: decisionId,
+              targets: [{
+                rule_id: designChange.rule_id,
+                rule_version: frontmatter.version,
+                fields: designChange.fields,
+              }],
+              decision: plan.goal,
+              rationale: plan.reason,
+              rationale_source: plan.reason_source,
+              evidence_ids: [],
+              alternatives: "unknown",
+              supersedes,
+              created_at: now.toISOString(),
+            },
+            plan.goal,
+            plan.reason,
+          ),
+          { encoding: "utf8", flag: "wx" },
+        );
+        changedDesignPaths.push(decisionPath);
+      }
       const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/u, "").trim();
       await writeFile(absolute, markdown(frontmatter, String(frontmatter.id), body), "utf8");
-      changedRulePaths.push(matchingPath);
+      changedDesignPaths.push(matchingPath);
     }
-    return changedRulePaths;
+    return changedDesignPaths;
   }
 
   private async findRulePath(reader: GitTreeReader, files: string[], ruleId: string): Promise<string | undefined> {
@@ -446,7 +497,8 @@ export class PublicationService {
           changed_paths: snapshot.changed_paths,
           request: plan.request,
           goal: plan.goal,
-          reason: "unknown",
+          reason: plan.reason ?? "unknown",
+          ...(plan.reason_source ? { reason_source: plan.reason_source } : {}),
           ...(plan.revert_of ? { revert_of: plan.revert_of } : {}),
           created_at: now.toISOString(),
         },

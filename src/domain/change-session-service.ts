@@ -270,7 +270,7 @@ export class ChangeSessionService {
         await store.recordOperation("start_execution", idempotencyKey, requestDigest, recovered, now);
         return recovered;
       }
-      if (session.state !== "ready_to_execute") {
+      if (session.state !== "ready_to_execute" && session.state !== "blocked") {
         if (!session.executionApprovalId) {
           throw new DesignTraceError("APPROVAL_REQUIRED", "Execution cannot start without operator approval");
         }
@@ -282,6 +282,12 @@ export class ChangeSessionService {
       const approval = await new ApprovalAuthority(this.projectRoot).requireValidExecutionApproval(changeId, now);
       const first = session.events[0]!;
       const baselineCommit = String(first.data.baseline_commit);
+      if (await this.#formalRepository.currentCommit() !== baselineCommit) {
+        throw new DesignTraceError("STALE_BASELINE", "Cannot start an execution attempt from a stale formal baseline");
+      }
+      if (session.state === "blocked") {
+        session = await store.transition("ready_to_execute", "authorized repair attempt requested", now);
+      }
       const executionRoot = path.join(this.projectRoot, "execution");
       const workspacePath = path.join(executionRoot, attemptId);
       await mkdir(executionRoot, { recursive: true });

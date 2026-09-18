@@ -176,6 +176,8 @@ export class HistoryService {
       acceptance_checks: originalPlan.acceptance_checks,
       risk_level: originalPlan.risk_level,
       policy_version: project.policy_version,
+      reason: request,
+      reason_source: "user_statement",
       revert_of: targetChangeId,
     };
     const sessions = new ChangeSessionService(this.projectRoot, this.projectId);

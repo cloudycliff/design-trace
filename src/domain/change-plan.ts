@@ -35,6 +35,8 @@ export interface ChangePlan {
   policy_version: number;
   context_id: string;
   created_at: string;
+  reason?: string;
+  reason_source?: "user_statement";
   revert_of?: string;
 }
 
@@ -101,6 +103,8 @@ const schema = {
     policy_version: { type: "integer", minimum: 1 },
     context_id: { type: "string", pattern: "^CTX-[A-Z0-9-]+$" },
     created_at: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+    reason: { type: "string", minLength: 1 },
+    reason_source: { type: "string", const: "user_statement" },
     revert_of: { type: "string", pattern: "^CHG-[A-Z0-9-]+$" },
   },
 } as const;
@@ -115,5 +119,8 @@ export function validateChangePlan(plan: unknown): asserts plan is ChangePlan {
       "ChangePlan does not satisfy schema v1",
       { errors: validate.errors ?? [] },
     );
+  }
+  if ((plan.reason === undefined) !== (plan.reason_source === undefined)) {
+    throw new DesignTraceError("INVALID_PROJECT", "ChangePlan reason and reason_source must be provided together");
   }
 }
