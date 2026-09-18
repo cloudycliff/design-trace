@@ -14,6 +14,7 @@ import { CandidateService } from "./domain/candidate-service.js";
 import { FormalRepository } from "./formal/formal-repository.js";
 import { PublicationService } from "./domain/publication-service.js";
 import { HistoryService } from "./domain/history-service.js";
+import { BackupService } from "./domain/backup-service.js";
 
 function flag(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
@@ -275,6 +276,31 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "backup") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const destination = flag("destination");
+    if (!project || !destination) throw new Error("backup requires --project <id> --destination <path>");
+    const service = new BackupService(path.join(data, project));
+    process.stdout.write(`${JSON.stringify(await service.create(path.resolve(destination)), null, 2)}\n`);
+    return;
+  }
+
+  if (command === "verify-backup") {
+    const backup = flag("backup");
+    if (!backup) throw new Error("verify-backup requires --backup <path>");
+    process.stdout.write(`${JSON.stringify(await BackupService.verify(path.resolve(backup)), null, 2)}\n`);
+    return;
+  }
+
+  if (command === "restore-backup") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const backup = flag("backup");
+    if (!backup) throw new Error("restore-backup requires --backup <path> --data <kernel-data>");
+    process.stdout.write(`${JSON.stringify({ projectRoot: await BackupService.restore(path.resolve(backup), data) }, null, 2)}\n`);
+    return;
+  }
+
   process.stderr.write(
     "Usage:\n" +
       "  design-trace init --source <git-repo> --data <kernel-data> --project <id> [--revision <commit>]\n" +
@@ -295,7 +321,10 @@ async function main(): Promise<void> {
       "  design-trace commit-change --data <kernel-data> --project <id> --change <id> --bundle <id> --key <key>\n" +
       "  design-trace query-design --data <kernel-data> --project <id> --rule <rule-id> [--field <field>]\n" +
       "  design-trace get-history --data <kernel-data> --project <id> --rule <rule-id>\n" +
-      "  design-trace propose-revert --data <kernel-data> --project <id> --target <change-id> --request <goal> --key <key>\n",
+      "  design-trace propose-revert --data <kernel-data> --project <id> --target <change-id> --request <goal> --key <key>\n" +
+      "  design-trace backup --data <kernel-data> --project <id> --destination <path>\n" +
+      "  design-trace verify-backup --backup <path>\n" +
+      "  design-trace restore-backup --backup <path> --data <kernel-data>\n",
   );
   process.exitCode = 2;
 }

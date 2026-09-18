@@ -193,3 +193,29 @@ test("loopback review page enforces cookie, Origin, CSRF and one-time nonce", as
     await server.close();
   }
 });
+
+test("operator can reject a pending review without creating an approval", async () => {
+  const { service, authority, changeId } = await plannedChange();
+  const review = await authority.prepareExecutionReview(changeId);
+  const server = new OperatorServer(authority);
+  const origin = await server.start();
+  try {
+    const page = await fetch(`${origin}/review/execution/${review.review_id}`);
+    const cookie = page.headers.get("set-cookie")?.split(";", 1)[0];
+    const html = await page.text();
+    const csrf = /name="csrf_token" value="([a-f0-9]{64})"/u.exec(html)?.[1];
+    const nonce = /name="nonce" value="([a-f0-9]{64})"/u.exec(html)?.[1];
+    assert.ok(cookie && csrf && nonce);
+    const rejected = await fetch(`${origin}/review/execution/${review.review_id}`, {
+      method: "POST",
+      headers: { cookie, origin, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ csrf_token: csrf, nonce, action: "reject" }),
+    });
+    assert.equal(rejected.status, 200);
+    const status = await service.getStatus(changeId);
+    assert.equal(status.state, "cancelled");
+    assert.equal(status.executionApprovalId, null);
+  } finally {
+    await server.close();
+  }
+});

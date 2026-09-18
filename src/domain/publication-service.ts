@@ -9,6 +9,7 @@ import { withFileLock } from "../core/file-lock.js";
 import { FormalRepository, GitTreeReader } from "../formal/formal-repository.js";
 import { parseFrontmatter } from "../formal/frontmatter.js";
 import { validateBaseline } from "../formal/project-validator.js";
+import { validateFormalTree } from "../formal/formal-integrity.js";
 import { git } from "../git/git-client.js";
 import { ApprovalAuthority, type ApprovalRecord } from "../operator/approval-authority.js";
 import { validateChangePlan, type ChangePlan } from "./change-plan.js";
@@ -154,6 +155,7 @@ export class PublicationService {
         const payloadCommit = await git(workspace, ["rev-parse", "HEAD"]);
         const payloadTreeOid = await git(workspace, ["rev-parse", "HEAD^{tree}"]);
         await validateBaseline(new GitTreeReader(workspace, payloadCommit));
+        await this.assertImmutableHistory(workspace, plan.baseline_commit, payloadCommit);
         const unsigned = {
           schema_version: 1 as const,
           bundle_id: bundleId,
@@ -292,6 +294,7 @@ export class PublicationService {
       result_approval_id: approval.approval_id,
       status: "applied",
     };
+    await new FormalRepository(this.#repositoryPath).markVerifiedCommit(commit, bundle.baseline_commit);
     await store.recordChangeApplied(bundle.bundle_id, commit, now);
     const recovered = await store.recover();
     if (recovered.state === "committing") await store.transition("applied", "formal reference published", now);
@@ -331,9 +334,23 @@ export class PublicationService {
       await git(workspace, ["config", "user.name", "Design Trace Kernel"]);
       await git(workspace, ["config", "user.email", "kernel@design-trace.invalid"]);
       await git(workspace, ["add", "--all"]);
+      const finalAdditions = (await git(
+        workspace,
+        ["diff", "--cached", "--name-only", "-z", bundle.payload_commit],
+        { trim: false },
+      )).split("\0").filter(Boolean).sort();
+      if (
+        finalAdditions.length !== 2 ||
+        !finalAdditions.includes(approvalPath) ||
+        !finalAdditions.includes(receiptPath)
+      ) {
+        throw new DesignTraceError("INTEGRITY_ERROR", "Final tree contains changes beyond result Approval and receipt", {
+          finalAdditions,
+        });
+      }
       const finalTree = await git(workspace, ["write-tree"]);
       const candidate = await git(workspace, ["commit-tree", finalTree, "-p", bundle.baseline_commit, "-m", `Apply ${bundle.change_id}`]);
-      await validateBaseline(new GitTreeReader(workspace, candidate));
+      await validateFormalTree(new GitTreeReader(workspace, candidate));
       await git(workspace, ["push", this.#repositoryPath, `${candidate}:refs/dt/prepared/${bundle.change_id}/${bundle.bundle_id}`]);
       const parent = await git(process.cwd(), ["rev-parse", `${candidate}^`], { gitDir: this.#repositoryPath });
       if (parent !== bundle.baseline_commit) {
@@ -480,7 +497,30 @@ export class PublicationService {
     return JSON.parse(await readFile(path.join(this.#sessionsRoot, changeId, "bundles", `${bundleId}.json`), "utf8")) as ReviewBundle;
   }
 
+  private async assertImmutableHistory(workspace: string, baselineCommit: string, payloadCommit: string): Promise<void> {
+    const output = await git(
+      workspace,
+      ["diff", "--name-status", "-z", baselineCommit, payloadCommit],
+      { trim: false },
+    );
+    const tokens = output.split("\0").filter(Boolean);
+    for (let index = 0; index < tokens.length;) {
+      const status = tokens[index++]!;
+      const paths = status.startsWith("R") || status.startsWith("C")
+        ? [tokens[index++]!, tokens[index++]!]
+        : [tokens[index++]!];
+      for (const changedPath of paths) {
+        if (
+          /^design\/(?:changes|decisions|evidence|approvals|receipts|plans|contexts|artifacts)\//u.test(changedPath) &&
+          status !== "A"
+        ) {
+          throw new DesignTraceError("INTEGRITY_ERROR", `Published history is append-only: ${changedPath}`);
+        }
+      }
+    }
+  }
+
   private currentFormalCommit(): Promise<string> {
-    return new FormalRepository(this.#repositoryPath).currentCommit();
+    return new FormalRepository(this.#repositoryPath).rawCurrentCommit();
   }
 }

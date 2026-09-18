@@ -179,7 +179,11 @@ test("Git CAS rejects a moved formal baseline without overwriting it", async () 
     setup.publications.commitChange(setup.changeId, bundle.bundle_id, "commit-key"),
     (error) => error instanceof DesignTraceError && error.code === "STALE_BASELINE",
   );
-  assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), bundle.payload_commit);
+  assert.equal(await new FormalRepository(setup.repositoryPath).rawCurrentCommit(), bundle.payload_commit);
+  await assert.rejects(
+    new FormalRepository(setup.repositoryPath).currentCommit(),
+    (error) => error instanceof DesignTraceError && error.code === "INTEGRITY_ERROR",
+  );
 });
 
 test("response loss after CAS recovers the one prepared official commit", async () => {
@@ -200,7 +204,11 @@ test("response loss after CAS recovers the one prepared official commit", async 
   const interrupted = await setup.sessions.getStatus(setup.changeId);
   assert.equal(interrupted.state, "committing");
   assert.ok(interrupted.preparedCommit);
-  assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), interrupted.preparedCommit);
+  assert.equal(await new FormalRepository(setup.repositoryPath).rawCurrentCommit(), interrupted.preparedCommit);
+  await assert.rejects(
+    new FormalRepository(setup.repositoryPath).currentCommit(),
+    (error) => error instanceof DesignTraceError && error.code === "INTEGRITY_ERROR",
+  );
   const recovered = await setup.publications.commitChange(
     setup.changeId,
     bundle.bundle_id,
@@ -208,5 +216,6 @@ test("response loss after CAS recovers the one prepared official commit", async 
     new Date(publicationTime.getTime() + 48 * 60 * 60 * 1000),
   );
   assert.equal(recovered.commit, interrupted.preparedCommit);
+  assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), recovered.commit);
   assert.equal((await setup.sessions.getStatus(setup.changeId)).state, "applied");
 });

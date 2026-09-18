@@ -107,38 +107,48 @@
 - 增加仓库内 `design-trace` Skill，明确查询、普通变更、补偿回退、两次批准和错误停止条件。
 - 增加 MCP 初始化/工具发现、无签批能力、正式查询和取消语义测试，以及 Agent 接入配置文档。
 
+### 完整性、恢复与维护加固
+
+- 初始化现在生成独立的 bootstrap 正式 commit 与回执；导入 commit 作为其父提交保留，不再把外部已有 commit 直接伪装成内核初始化记录。
+- `project.json` 保存最后一次合法发布 commit；正式查询和新 Change 会拒绝没有合法发布记录的外部 `dt-main` 移动。
+- CAS 成功后先推进可恢复的验证账本，再写 applied 事件；响应丢失恢复仍使用 raw ref 核对准备记录。
+- 正式发布前校验完整文件树：基础 Rule/Binding 一致性、Markdown ID 唯一性、Change、计划、上下文摘要、Approval、ReviewBundle/回执引用和内容寻址日志。
+- 历史目录执行追加式检查，既有 Change、Decision、Evidence、Approval、Receipt、Plan、Context 与 artifact 不允许被修改或删除。
+- 项目锁会识别仍存活的持有进程，并安全清理由已退出进程遗留的锁；损坏或无法判定的锁不会被静默删除。
+- 提供不包含操作员密钥的校验式备份与恢复；manifest 覆盖 bare repository、会话、验证证据和项目元数据，恢复后未使用批准因密钥轮换而失效。
+- 操作员审查页支持明确拒绝并取消 Change，不生成 Approval。
+
 ## 当前验证结果
 
 2026-09-18 本地执行：
 
 | 命令 | 结果 | 覆盖 |
 |---|---:|---|
-| `npm test` | 40 通过 | T08 MCP 协议、工具边界、取消语义，T07 历史/补偿回退，以及 T01～T06 既有测试 |
+| `npm test` | 44 通过 | T08 MCP/Skill 边界、T07 历史/回退、备份恢复、外部引用检测、陈旧锁恢复、正式 ID 校验和审查拒绝，以及既有测试 |
 | `npm run fixture:test` | 10 通过 | 0、1、19、100、101 金币在普通/困难模式下按配置值向下取整的程序行为 |
 
 这些测试只覆盖当前切片，不代表第 15.1 节 A01～A22 已全部通过。
 
 ## 尚未完成与已知限制
 
-- T01：尚未由内核生成 bootstrap 回执；当前夹具内只有 bootstrap Change。
 - T01 / 阶段 0：缺少真实项目、真实初始 commit、稳定程序入口、原有测试和用户确认的业务含义。
-- T02：Rule、Decision 等其余正式对象尚无完整 Schema；写锁的崩溃后陈旧锁判定和所有写接口的统一幂等包装尚未实现。
+- T02：正式对象已有跨类型 ID、引用及关键字段校验，但尚未为每类对象建立独立的完整 JSON Schema；部分维护类写接口不使用业务幂等键。
 - T03：当前只支持一层关系和显式 JSON Binding；尚未接入 Change 的候选快照、计划派生期望值、人工 Evidence 录入及二层“可能影响”。
-- T04：execution 与 result 两阶段批准已实现；操作员会话仍为进程内状态，尚未实现拒绝/取消界面和服务重启恢复。
+- T04：execution 与 result 两阶段批准及拒绝/取消已实现；浏览器会话仍为进程内状态，服务重启后需重新打开待审查页面建立会话。
 - T05：尚未接入真实 Agent 进程生命周期、停止确认、修复重试与候选 Rule 自动生成；当前仅支持计划明确列出的既有 JSON 文件。
 - T06：当前按首个 JSON/Rule 夹具生成正式对象；尚未覆盖通用 Rule 字段变更、完整对象 Schema、索引重建失败状态和所有 commit 创建前中断点。
 - T07：已支持字段级 Decision 读取和 unknown 理由，但尚无单独的 Decision 提案/录入流程；依赖冲突当前覆盖目标配置与 Rule 字段的后续变化。
 - T08：MCP 与流程 Skill 已实现；两个自动化夹具迭代已覆盖修改与回退，但真实项目连续试用及使用成本指标仍需真实项目输入。
-- 当前 YAML 校验仅覆盖首个夹具所需字段，还不是全部正式对象的完整 JSON Schema 验证。
-- 事件追加遵循单内核串行假设，尚无跨进程写锁；并发启动内核不在当前已验证范围内。
+- 当前 YAML/JSON 校验覆盖正式发布所需关键字段和引用，但还不是每类对象的穷尽式 JSON Schema。
+- 文件锁支持跨进程互斥及死亡 PID 恢复；网络文件系统及 PID 极端复用场景尚未验证。
 
 ## 下一步开发顺序
 
 1. 收尾 T02：补齐正式对象 Schema、批准失效事件、陈旧锁安全恢复和统一操作幂等包装。
 2. 收尾 T03：补齐候选期望值并把 ValidationRun 接入 Change 事件链。
 3. 收尾 T04：增加退回/取消、操作员会话恢复与批准异常恢复。
-4. 补齐 Mandatory 工程验收中尚未覆盖的备份/恢复、外部引用篡改和兼容性案例。
-5. 收尾完整对象 Schema、陈旧锁恢复、操作员会话恢复和通用 Rule 变更等工程限制。
+4. 补齐 Mandatory 工程验收中尚未覆盖的兼容性、索引降级和更多进程中断点。
+5. 收尾穷尽式对象 Schema、通用 Rule 变更和真实 Agent 进程生命周期。
 6. 获得真实试点资料后执行两个连续迭代并补写阶段 0/3 记录；在此之前不宣称个人 MVP 完成。
 
 ## 后续接手入口
@@ -159,6 +169,8 @@
 - 设计历史与补偿回退：`src/domain/history-service.ts`
 - Agent 服务适配：`src/mcp/design-trace-mcp.ts`、`src/mcp/stdio.ts`
 - Agent 流程 Skill：`skills/design-trace/SKILL.md`
+- 备份与恢复：`src/domain/backup-service.ts`
+- 正式树完整性：`src/formal/formal-integrity.ts`
 - 正式仓库初始化：`src/formal/formal-repository.ts`
 - 基线校验：`src/formal/project-validator.ts`
 - 首条验收夹具：`fixtures/death-penalty/`

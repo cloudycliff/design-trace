@@ -60,6 +60,9 @@ node dist/src/cli.js commit-change --data <kernel-data> --project <project-id> -
 node dist/src/cli.js query-design --data <kernel-data> --project <project-id> --rule <rule-id> --field parameters.penalty_bps
 node dist/src/cli.js get-history --data <kernel-data> --project <project-id> --rule <rule-id>
 node dist/src/cli.js propose-revert --data <kernel-data> --project <project-id> --target <change-id> --request <goal> --key <key>
+node dist/src/cli.js backup --data <kernel-data> --project <project-id> --destination <backup-path>
+node dist/src/cli.js verify-backup --backup <backup-path>
+node dist/src/cli.js restore-backup --backup <backup-path> --data <new-kernel-data>
 ```
 
 将两条 `review-*` 命令返回的 `review_path` 拼接到操作员服务输出的 `origin` 后，在浏览器中完成对应阶段审批。

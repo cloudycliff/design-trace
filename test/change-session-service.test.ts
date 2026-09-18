@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
+import { writeFile } from "node:fs/promises";
 import { DesignTraceError } from "../src/core/errors.js";
 import { FileLock } from "../src/core/file-lock.js";
 import { ChangeSessionService } from "../src/domain/change-session-service.js";
@@ -136,4 +137,14 @@ test("project write lock rejects a concurrent writer", async () => {
   } finally {
     await lock.release();
   }
+});
+
+test("a lock left by a dead process is recovered without weakening active-owner checks", async () => {
+  const source = await committedFixture();
+  const data = await kernelDirectory();
+  await FormalRepository.initialize(source.root, data, "death-penalty-fixture");
+  const lockPath = path.join(data, "death-penalty-fixture", ".write.lock");
+  await writeFile(lockPath, `${JSON.stringify({ token: "stale", pid: 2147483647, acquired_at: "2020-01-01T00:00:00Z" })}\n`);
+  const recovered = await FileLock.acquire(lockPath);
+  await recovered.release();
 });

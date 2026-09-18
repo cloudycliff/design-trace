@@ -300,6 +300,37 @@ export class ApprovalAuthority {
     });
   }
 
+  async rejectReview(reviewId: string, nonce: string, now = new Date()): Promise<void> {
+    return withFileLock(this.#lockPath, async () => {
+      this.assertReviewId(reviewId);
+      const reviewPath = this.reviewPath(reviewId);
+      const pending = JSON.parse(await readFile(reviewPath, "utf8")) as PendingReview;
+      if (pending.consumed_at) throw new DesignTraceError("INVALID_STATE", "Review nonce has already been consumed");
+      if (!constantTimeEqual(pending.nonce, nonce)) {
+        throw new DesignTraceError("APPROVAL_REQUIRED", "Review nonce is invalid");
+      }
+      const store = new EventStore(this.#sessionsRoot, pending.change_id);
+      const session = await store.recover();
+      const expectedState = pending.stage === "execution" ? "awaiting_execution_approval" : "awaiting_result_approval";
+      if (session.state !== expectedState) {
+        throw new DesignTraceError("INVALID_STATE", `Review no longer matches Change state ${session.state}`);
+      }
+      if (pending.stage === "execution") {
+        const current = await this.currentExecutionSubject(pending.change_id);
+        if (current.subjectDigest !== pending.subject_digest) {
+          throw new DesignTraceError("STALE_PLAN", "Execution review no longer matches the active subject");
+        }
+      } else {
+        const current = await this.currentResultSubject(pending.change_id, pending.bundle_id);
+        if (current.bundle.review_digest !== pending.subject_digest) {
+          throw new DesignTraceError("STALE_PLAN", "Result review no longer matches the active bundle");
+        }
+      }
+      await store.transition("cancelled", `operator rejected ${pending.stage} review`, now);
+      await replaceJson(reviewPath, { ...pending, consumed_at: now.toISOString() });
+    });
+  }
+
   async requireValidExecutionApproval(changeId: string, now = new Date()): Promise<ApprovalRecord> {
     this.assertChangeId(changeId);
     const store = new EventStore(this.#sessionsRoot, changeId);

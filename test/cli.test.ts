@@ -16,7 +16,8 @@ test("CLI initializes and reads from the formal ref", async () => {
     [cli, "init", "--source", source.root, "--data", data, "--project", "death-penalty-fixture"],
     { encoding: "utf8", windowsHide: true },
   );
-  assert.equal(JSON.parse(initialized.stdout).formalCommit, source.commit);
+  const formalCommit = String(JSON.parse(initialized.stdout).formalCommit);
+  assert.notEqual(formalCommit, source.commit);
 
   const shown = await execFileAsync(
     process.execPath,

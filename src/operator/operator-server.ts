@@ -110,7 +110,8 @@ export class OperatorServer {
           details + `<form method="post">` +
           `<input type="hidden" name="csrf_token" value="${csrfToken}">` +
           `<input type="hidden" name="nonce" value="${review.nonce}">` +
-          `<button type="submit">Approve</button></form></body></html>`,
+          `<button type="submit" name="action" value="approve">Approve</button>` +
+          `<button type="submit" name="action" value="reject">Reject and cancel</button></form></body></html>`,
         "text/html; charset=utf-8",
       );
       return;
@@ -133,13 +134,23 @@ export class OperatorServer {
         this.respond(response, 403, "CSRF check failed", "text/plain; charset=utf-8");
         return;
       }
-      if (stage === "execution") {
-        await this.authority.approveExecution(reviewId, body.get("nonce") ?? "", sessionId);
+      const nonce = body.get("nonce") ?? "";
+      if (body.get("action") === "reject") {
+        await this.authority.rejectReview(reviewId, nonce);
+      } else if (stage === "execution") {
+        await this.authority.approveExecution(reviewId, nonce, sessionId);
       } else {
-        await this.authority.approveResult(reviewId, body.get("nonce") ?? "", sessionId);
+        await this.authority.approveResult(reviewId, nonce, sessionId);
       }
       this.#sessions.delete(sessionId);
-      this.respond(response, 200, stage === "execution" ? "Execution plan approved." : "Result bundle approved.", "text/plain; charset=utf-8");
+      this.respond(
+        response,
+        200,
+        body.get("action") === "reject"
+          ? "Review rejected and Change cancelled."
+          : stage === "execution" ? "Execution plan approved." : "Result bundle approved.",
+        "text/plain; charset=utf-8",
+      );
       return;
     }
 
