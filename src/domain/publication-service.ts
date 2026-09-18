@@ -13,6 +13,7 @@ import { validateFormalTree } from "../formal/formal-integrity.js";
 import { git } from "../git/git-client.js";
 import { ApprovalAuthority, type ApprovalRecord } from "../operator/approval-authority.js";
 import { validateChangePlan, type ChangePlan } from "./change-plan.js";
+import type { ExecutionAttempt } from "./change-session-service.js";
 import type { ContextPackage } from "./context-service.js";
 import type { ExecutionSnapshot } from "./candidate-service.js";
 import { loadFormalObjects } from "./formal-objects.js";
@@ -97,7 +98,15 @@ export class PublicationService {
       const snapshot = await this.readSnapshot(changeId, session.activeSnapshotId);
       const validation = await this.readValidation(session.validationBatchId);
       const context = await this.readContext(changeId, plan.context_id);
-      const executionApproval = await new ApprovalAuthority(this.projectRoot).requireValidExecutionApproval(changeId, now);
+      if (!session.activeAttemptId) throw new DesignTraceError("INTEGRITY_ERROR", "Validated session has no active attempt");
+      const attempt = JSON.parse(await readFile(
+        path.join(this.#sessionsRoot, changeId, "attempts", `${session.activeAttemptId}.json`),
+        "utf8",
+      )) as ExecutionAttempt;
+      const executionApproval = await new ApprovalAuthority(this.projectRoot).requireValidExecutionApproval(
+        changeId,
+        new Date(attempt.started_at),
+      );
       const retainedSnapshot = await git(
         process.cwd(),
         ["rev-parse", `refs/dt/snapshots/${changeId}/${snapshot.attempt_id}`],
@@ -121,6 +130,8 @@ export class PublicationService {
         validation.runs.some((run) => !expectedChecks.has(run.check_id)) ||
         !validation.all_required_passed ||
         validation.runs.some((run) => run.required && run.result !== "passed")
+        || attempt.plan_approval_id !== executionApproval.approval_id
+        || attempt.attempt_id !== snapshot.attempt_id
       ) {
         throw new DesignTraceError("VALIDATION_FAILED", "Validation evidence is incomplete or does not bind the active snapshot");
       }

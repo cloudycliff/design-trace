@@ -92,7 +92,11 @@ async function approveResult(
 
 test("formal publication requires a result approval bound to the review bundle", async () => {
   const setup = await validatedChange();
-  const bundle = await setup.publications.buildResultReview(setup.changeId, "bundle-key");
+  const bundle = await setup.publications.buildResultReview(
+    setup.changeId,
+    "bundle-key",
+    new Date(Date.now() + 48 * 60 * 60 * 1000),
+  );
   await assert.rejects(
     setup.publications.commitChange(setup.changeId, bundle.bundle_id, "commit-key"),
     (error) => error instanceof DesignTraceError && error.code === "APPROVAL_REQUIRED",
