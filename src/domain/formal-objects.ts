@@ -11,6 +11,21 @@ export interface Rule {
   statement: string;
   conditions: Record<string, unknown>;
   parameters: Record<string, unknown>;
+  decision_bindings: Array<{ decision_id: string; fields: string[] }>;
+  last_change_id: string | null;
+}
+
+export interface Decision {
+  schema_version: 1;
+  id: string;
+  targets: Array<{ rule_id: string; rule_version: number; fields: string[] }>;
+  decision: string;
+  rationale: string;
+  rationale_source: string;
+  evidence_ids: string[];
+  alternatives: unknown;
+  supersedes: Array<{ decision_id: string; rule_id: string; fields: string[] }>;
+  created_at: string;
 }
 
 export interface ImplementationBinding {
@@ -100,19 +115,21 @@ export async function loadProjectDefinition(reader: TreeReader): Promise<Project
 
 export async function loadFormalObjects(reader: TreeReader): Promise<{
   rules: Rule[];
+  decisions: Decision[];
   bindings: ImplementationBinding[];
   relations: Relation[];
   evidenceIds: Set<string>;
 }> {
   const files = await reader.listFiles();
   const rules: Rule[] = [];
+  const decisions: Decision[] = [];
   const bindings: ImplementationBinding[] = [];
   const relations: Relation[] = [];
   const evidenceIds = new Set<string>();
   const allIds = new Set<string>();
 
   for (const file of files) {
-    const kind = /^design\/(rules|bindings|relations|evidence)\/[^/]+\.md$/u.exec(file.path)?.[1];
+    const kind = /^design\/(rules|decisions|bindings|relations|evidence)\/[^/]+\.md$/u.exec(file.path)?.[1];
     if (!kind) continue;
     const raw = parseFrontmatter(await reader.readText(file.path), file.path);
     if (raw.schema_version !== 1) {
@@ -123,6 +140,10 @@ export async function loadFormalObjects(reader: TreeReader): Promise<{
     allIds.add(id);
 
     if (kind === "rules") {
+      const rawBindings = raw.decision_bindings ?? [];
+      if (!Array.isArray(rawBindings)) {
+        throw new DesignTraceError("INVALID_PROJECT", `${file.path}.decision_bindings must be an array`);
+      }
       rules.push({
         schema_version: 1,
         id,
@@ -132,6 +153,46 @@ export async function loadFormalObjects(reader: TreeReader): Promise<{
         statement: requireString(raw.statement, `${file.path}.statement`),
         conditions: requireObject(raw.conditions, `${file.path}.conditions`),
         parameters: requireObject(raw.parameters, `${file.path}.parameters`),
+        decision_bindings: rawBindings.map((value, index) => {
+          const binding = requireObject(value, `${file.path}.decision_bindings[${index}]`);
+          return {
+            decision_id: requireString(binding.decision_id, `${file.path}.decision_bindings[${index}].decision_id`),
+            fields: requireStringArray(binding.fields, `${file.path}.decision_bindings[${index}].fields`),
+          };
+        }),
+        last_change_id: raw.last_change_id === undefined
+          ? null
+          : requireString(raw.last_change_id, `${file.path}.last_change_id`),
+      });
+    } else if (kind === "decisions") {
+      if (!Array.isArray(raw.targets) || !Array.isArray(raw.supersedes)) {
+        throw new DesignTraceError("INVALID_PROJECT", `${file.path} Decision targets and supersedes must be arrays`);
+      }
+      decisions.push({
+        schema_version: 1,
+        id,
+        targets: raw.targets.map((value, index) => {
+          const target = requireObject(value, `${file.path}.targets[${index}]`);
+          return {
+            rule_id: requireString(target.rule_id, `${file.path}.targets[${index}].rule_id`),
+            rule_version: requireInteger(target.rule_version, `${file.path}.targets[${index}].rule_version`),
+            fields: requireStringArray(target.fields, `${file.path}.targets[${index}].fields`),
+          };
+        }),
+        decision: requireString(raw.decision, `${file.path}.decision`),
+        rationale: requireString(raw.rationale, `${file.path}.rationale`),
+        rationale_source: requireString(raw.rationale_source, `${file.path}.rationale_source`),
+        evidence_ids: requireStringArray(raw.evidence_ids, `${file.path}.evidence_ids`),
+        alternatives: raw.alternatives ?? "unknown",
+        supersedes: raw.supersedes.map((value, index) => {
+          const superseded = requireObject(value, `${file.path}.supersedes[${index}]`);
+          return {
+            decision_id: requireString(superseded.decision_id, `${file.path}.supersedes[${index}].decision_id`),
+            rule_id: requireString(superseded.rule_id, `${file.path}.supersedes[${index}].rule_id`),
+            fields: requireStringArray(superseded.fields, `${file.path}.supersedes[${index}].fields`),
+          };
+        }),
+        created_at: requireString(raw.created_at, `${file.path}.created_at`),
       });
     } else if (kind === "bindings") {
       bindings.push({
@@ -182,5 +243,13 @@ export async function loadFormalObjects(reader: TreeReader): Promise<{
       throw new DesignTraceError("INVALID_PROJECT", `Relation ${relation.id} has a missing endpoint`);
     }
   }
-  return { rules, bindings, relations, evidenceIds };
+  const decisionIds = new Set(decisions.map((decision) => decision.id));
+  for (const rule of rules) {
+    for (const binding of rule.decision_bindings) {
+      if (!decisionIds.has(binding.decision_id)) {
+        throw new DesignTraceError("INVALID_PROJECT", `Rule ${rule.id} references missing Decision ${binding.decision_id}`);
+      }
+    }
+  }
+  return { rules, decisions, bindings, relations, evidenceIds };
 }

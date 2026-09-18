@@ -13,6 +13,7 @@ import { OperatorServer } from "./operator/operator-server.js";
 import { CandidateService } from "./domain/candidate-service.js";
 import { FormalRepository } from "./formal/formal-repository.js";
 import { PublicationService } from "./domain/publication-service.js";
+import { HistoryService } from "./domain/history-service.js";
 
 function flag(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
@@ -247,6 +248,33 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "query-design" || command === "get-history") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const rule = flag("rule");
+    if (!project || !rule) throw new Error(`${command} requires --project <id> --rule <rule-id>`);
+    const service = new HistoryService(path.join(data, project), project);
+    const result = command === "get-history"
+      ? await service.getHistory(rule)
+      : await service.queryDesign(rule, flag("field"));
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "propose-revert") {
+    const data = path.resolve(flag("data") ?? ".dt");
+    const project = flag("project");
+    const target = flag("target");
+    const request = flag("request");
+    const key = flag("key");
+    if (!project || !target || !request || !key) {
+      throw new Error("propose-revert requires --project <id> --target <change-id> --request <goal> --key <key>");
+    }
+    const service = new HistoryService(path.join(data, project), project);
+    process.stdout.write(`${JSON.stringify(await service.proposeRevert(target, request, key), null, 2)}\n`);
+    return;
+  }
+
   process.stderr.write(
     "Usage:\n" +
       "  design-trace init --source <git-repo> --data <kernel-data> --project <id> [--revision <commit>]\n" +
@@ -264,7 +292,10 @@ async function main(): Promise<void> {
       "  design-trace validate-candidate --data <kernel-data> --project <id> --change <id> --snapshot <id> --key <key>\n" +
       "  design-trace build-result-review --data <kernel-data> --project <id> --change <id> --key <key>\n" +
       "  design-trace review-result --data <kernel-data> --project <id> --change <id> --bundle <id>\n" +
-      "  design-trace commit-change --data <kernel-data> --project <id> --change <id> --bundle <id> --key <key>\n",
+      "  design-trace commit-change --data <kernel-data> --project <id> --change <id> --bundle <id> --key <key>\n" +
+      "  design-trace query-design --data <kernel-data> --project <id> --rule <rule-id> [--field <field>]\n" +
+      "  design-trace get-history --data <kernel-data> --project <id> --rule <rule-id>\n" +
+      "  design-trace propose-revert --data <kernel-data> --project <id> --target <change-id> --request <goal> --key <key>\n",
   );
   process.exitCode = 2;
 }

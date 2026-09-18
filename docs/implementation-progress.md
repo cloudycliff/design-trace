@@ -2,7 +2,7 @@
 
 > 最后更新：2026-09-18
 > 设计基线：`design-trace-architecture-and-roadmap.md` v0.7  
-> 当前结论：T01～T06 已形成固定夹具上的“计划批准—独立执行—候选冻结—验证—结果批准—原子发布”完整纵向切片；尚未实现回退、原因查询和 Agent 接入，因此未达到个人 MVP 退出条件。
+> 当前结论：T01～T07 已形成固定夹具上的“计划批准—独立执行—候选冻结—验证—结果批准—原子发布—历史查询—补偿回退”完整纵向切片；尚未实现 Agent 接入和真实项目试用，因此未达到个人 MVP 退出条件。
 
 ## 范围说明
 
@@ -88,13 +88,23 @@
 - CAS 已成功但响应或 applied 事件丢失时，根据准备记录和正式引用恢复同一个 commit，不重复创建正式结果。
 - `build-result-review` 与 `commit-change` 支持幂等键；CLI 新增 `build-result-review`、`review-result` 和 `commit-change`。
 
+### T07 历史查询与补偿回退（固定夹具切片）
+
+- 当前设计查询固定读取 `dt-main`，返回 Rule、字段绑定对账、正式 commit、当前 Change 理由、适用 Decision 和来源路径。
+- Rule 历史直接遍历正式 Git 提交，保留各版本、关联 Change、理由及时间；理由缺失时明确返回 `unknown`。
+- Decision 加载支持字段级 target、Rule 的 `decision_bindings` 和带范围的 `supersedes` 数据结构，不按最新记录猜测当前理由。
+- `propose-revert` 从正式 Change、回执中的 ReviewBundle 和原计划生成当前基线上的新 `kind: revert` 计划，反转精确 JSON Pointer 差异。
+- 回退不删除旧 Change、批准、证据或回执；重新执行完整的计划批准、候选验证、结果批准和 CAS 发布，Rule 版本继续递增。
+- 若目标配置字段或对应 Rule 字段被后续 Change 修改，返回 `REVERT_CONFLICT` 及精确冲突位置，不自动合并或机械 `git revert`。
+- CLI 新增 `query-design`、`get-history` 和 `propose-revert`。
+
 ## 当前验证结果
 
 2026-09-18 本地执行：
 
 | 命令 | 结果 | 覆盖 |
 |---|---:|---|
-| `npm test` | 34 通过 | T06 payload/bundle、结果批准、原子发布、CAS 冲突和响应丢失恢复，以及 T01～T05 既有测试 |
+| `npm test` | 37 通过 | T07 原因/版本查询、完整补偿回退和后续字段冲突拒绝，以及 T01～T06 既有测试 |
 | `npm run fixture:test` | 10 通过 | 0、1、19、100、101 金币在普通/困难模式下按配置值向下取整的程序行为 |
 
 这些测试只覆盖当前切片，不代表第 15.1 节 A01～A22 已全部通过。
@@ -108,7 +118,8 @@
 - T04：execution 与 result 两阶段批准已实现；操作员会话仍为进程内状态，尚未实现拒绝/取消界面和服务重启恢复。
 - T05：尚未接入真实 Agent 进程生命周期、停止确认、修复重试与候选 Rule 自动生成；当前仅支持计划明确列出的既有 JSON 文件。
 - T06：当前按首个 JSON/Rule 夹具生成正式对象；尚未覆盖通用 Rule 字段变更、完整对象 Schema、索引重建失败状态和所有 commit 创建前中断点。
-- T07 以后：原因查询、补偿回退、MCP 与 Skill 尚未实现。
+- T07：已支持字段级 Decision 读取和 unknown 理由，但尚无单独的 Decision 提案/录入流程；依赖冲突当前覆盖目标配置与 Rule 字段的后续变化。
+- T08：MCP、流程 Skill 与真实项目连续试用尚未实现。
 - 当前 YAML 校验仅覆盖首个夹具所需字段，还不是全部正式对象的完整 JSON Schema 验证。
 - 事件追加遵循单内核串行假设，尚无跨进程写锁；并发启动内核不在当前已验证范围内。
 
@@ -117,8 +128,8 @@
 1. 收尾 T02：补齐正式对象 Schema、批准失效事件、陈旧锁安全恢复和统一操作幂等包装。
 2. 收尾 T03：补齐候选期望值并把 ValidationRun 接入 Change 事件链。
 3. 收尾 T04：增加退回/取消、操作员会话恢复与批准异常恢复。
-4. 推进 T07：从正式提交查询 Change 原因与绑定历史，并实现以新 Change 表达的补偿回退。
-5. 推进 T08：在领域服务之上增加 MCP 与流程 Skill，不为适配层绕过两次批准。
+4. 推进 T08：在领域服务之上增加 MCP 与流程 Skill，不为适配层绕过两次批准。
+5. 补齐 Mandatory 工程验收中尚未覆盖的备份/恢复、外部引用篡改和兼容性案例。
 6. 获得真实试点资料后补写阶段 0 记录；在此之前不宣称阶段 0 完成。
 
 ## 后续接手入口
@@ -136,6 +147,7 @@
 - Loopback 审查页：`src/operator/operator-server.ts`
 - 执行范围与快照：`src/domain/candidate-service.ts`
 - payload、bundle 与 CAS 发布：`src/domain/publication-service.ts`
+- 设计历史与补偿回退：`src/domain/history-service.ts`
 - 正式仓库初始化：`src/formal/formal-repository.ts`
 - 基线校验：`src/formal/project-validator.ts`
 - 首条验收夹具：`fixtures/death-penalty/`
