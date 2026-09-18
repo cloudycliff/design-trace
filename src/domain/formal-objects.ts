@@ -1,6 +1,7 @@
 import { DesignTraceError } from "../core/errors.js";
 import type { TreeReader } from "../formal/project-validator.js";
 import { parseFrontmatter, parseYamlObject } from "../formal/frontmatter.js";
+import { validateFormalObject, validateProjectObject, type FormalObjectKind } from "./formal-object-schema.js";
 
 export interface Rule {
   schema_version: 1;
@@ -110,6 +111,7 @@ function requireStringArray(value: unknown, label: string): string[] {
 
 export async function loadProjectDefinition(reader: TreeReader): Promise<ProjectDefinition> {
   const raw = parseYamlObject(await reader.readText("design/project.yaml"), "design/project.yaml");
+  validateProjectObject(raw);
   return raw as unknown as ProjectDefinition;
 }
 
@@ -132,6 +134,7 @@ export async function loadFormalObjects(reader: TreeReader): Promise<{
     const kind = /^design\/(rules|decisions|bindings|relations|evidence)\/[^/]+\.md$/u.exec(file.path)?.[1];
     if (!kind) continue;
     const raw = parseFrontmatter(await reader.readText(file.path), file.path);
+    validateFormalObject(kind as FormalObjectKind, raw, file.path);
     if (raw.schema_version !== 1) {
       throw new DesignTraceError("INVALID_PROJECT", `${file.path} must use schema_version 1`);
     }
@@ -233,9 +236,17 @@ export async function loadFormalObjects(reader: TreeReader): Promise<{
   }
 
   const ruleIds = new Set(rules.map((rule) => rule.id));
+  const project = await loadProjectDefinition(reader);
+  const checkIds = new Set((project.checks ?? []).map((check) => check.id));
   for (const binding of bindings) {
     if (!ruleIds.has(binding.rule_id)) {
       throw new DesignTraceError("INVALID_PROJECT", `Binding ${binding.id} references missing Rule ${binding.rule_id}`);
+    }
+    if (!checkIds.has(binding.verification_check_id)) {
+      throw new DesignTraceError(
+        "INVALID_PROJECT",
+        `Binding ${binding.id} references missing Check ${binding.verification_check_id}`,
+      );
     }
   }
   for (const relation of relations) {
@@ -244,10 +255,30 @@ export async function loadFormalObjects(reader: TreeReader): Promise<{
     }
   }
   const decisionIds = new Set(decisions.map((decision) => decision.id));
+  for (const decision of decisions) {
+    for (const target of decision.targets) {
+      if (!ruleIds.has(target.rule_id)) {
+        throw new DesignTraceError("INVALID_PROJECT", `Decision ${decision.id} references missing Rule ${target.rule_id}`);
+      }
+    }
+    for (const superseded of decision.supersedes) {
+      if (!decisionIds.has(superseded.decision_id) || !ruleIds.has(superseded.rule_id)) {
+        throw new DesignTraceError("INVALID_PROJECT", `Decision ${decision.id} has a broken supersedes reference`);
+      }
+    }
+    if (decision.evidence_ids.some((evidenceId) => !evidenceIds.has(evidenceId))) {
+      throw new DesignTraceError("INVALID_PROJECT", `Decision ${decision.id} references missing Evidence`);
+    }
+  }
   for (const rule of rules) {
     for (const binding of rule.decision_bindings) {
       if (!decisionIds.has(binding.decision_id)) {
         throw new DesignTraceError("INVALID_PROJECT", `Rule ${rule.id} references missing Decision ${binding.decision_id}`);
+      }
+      const decision = decisions.find((candidate) => candidate.id === binding.decision_id)!;
+      if (!decision.targets.some((target) =>
+        target.rule_id === rule.id && binding.fields.every((field) => target.fields.includes(field)))) {
+        throw new DesignTraceError("INVALID_PROJECT", `Rule ${rule.id} Decision binding has an incompatible target`);
       }
     }
   }

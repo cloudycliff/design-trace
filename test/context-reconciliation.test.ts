@@ -76,6 +76,8 @@ verified_versions:
   to: 1
 evidence_ids:
   - EVD-RELATION-REVIEW
+last_verified_at: 2026-09-17T00:00:00Z
+created_at: 2026-09-17T00:00:00Z
 ---
 
 # Tutorial impact on hard mode
@@ -94,6 +96,8 @@ verified_versions:
   to: 1
 evidence_ids:
   - EVD-RELATION-REVIEW
+last_verified_at: 2026-09-17T00:00:00Z
+created_at: 2026-09-17T00:00:00Z
 ---
 
 # Cycle back to normal mode

@@ -111,11 +111,24 @@ test("an incompatible formal schema blocks new writes without rewriting compatib
   const service = new ChangeSessionService(projectRoot, "death-penalty-fixture");
   await assert.rejects(
     service.beginChange("must not write through an incompatible schema", "future-schema"),
-    (error) => error instanceof DesignTraceError && error.code === "INVALID_PROJECT" && /schema_version 1/u.test(error.message),
+    (error) => error instanceof DesignTraceError && error.code === "INVALID_PROJECT" && /project schema v1/u.test(error.message),
   );
   assert.equal(await git(process.cwd(), ["cat-file", "-t", initialized.formalCommit], { gitDir: initialized.repositoryPath }), "commit");
   assert.match(
     await new GitTreeReader(process.cwd(), initialized.formalCommit, initialized.repositoryPath).readText("design/project.yaml"),
     /schema_version: 1/u,
+  );
+});
+
+test("formal object schemas reject unknown fields", async () => {
+  const source = await committedFixture();
+  const data = await kernelDirectory();
+  const rulePath = path.join(source.root, "design/rules/death-normal.md");
+  await writeFile(rulePath, (await readFile(rulePath, "utf8")).replace("status: active", "status: active\nunexpected: true"));
+  await git(source.root, ["add", "."]);
+  await git(source.root, ["commit", "-m", "Add an unknown Rule field"]);
+  await assert.rejects(
+    FormalRepository.initialize(source.root, data, "death-penalty-fixture"),
+    (error) => error instanceof DesignTraceError && error.code === "INVALID_PROJECT" && /rules schema v1/u.test(error.message),
   );
 });

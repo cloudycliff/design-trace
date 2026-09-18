@@ -25,7 +25,7 @@
 | A15 | 通过 | `history-revert.test.ts`：`revert proposal rejects target fields changed...` | 后续字段修改返回精确 `REVERT_CONFLICT`，不执行机械逆操作。 |
 | A16 | 通过 | `context-reconciliation.test.ts`：`impact analysis limits propagation to two hops...` | 版本过期/未验证边降级；二层传播始终为可能影响；循环由 visited 集合终止并报告。 |
 | A17 | 通过 | `context-reconciliation.test.ts`：`reconciliation returns unknown...` | 提取范围不足、动态覆盖、环境不符、单位不符均返回 `unknown`。 |
-| A18 | 通过 | `formal-repository.test.ts`、`event-store.test.ts`、`candidate-service.test.ts`、`formal-integrity.ts` | 重复 ID、引用断链、事件篡改、危险路径、符号链接/子模块和正式历史改写均被拒绝。 |
+| A18 | 通过 | `formal-repository.test.ts`、`event-store.test.ts`、`candidate-service.test.ts`、`formal-integrity.ts` | 严格对象 Schema、重复 ID、引用断链、事件篡改、危险路径、符号链接/子模块和正式历史改写均被拒绝。 |
 | A19 | 通过 | `history-revert.test.ts`：`partial Decision supersession retains...` 及 unknown 理由测试 | 字段级部分取代保留未受影响字段的旧理由；无理由参数修改保持 `unknown`。 |
 | A20 | 通过 | `history-revert.test.ts`、`publication-service.test.ts` | 查询和写入都核对已验证 commit 账本；外部移动正式引用返回 `INTEGRITY_ERROR`。 |
 | A21 | 通过 | `backup-service.test.ts`、`formal-repository.test.ts`：不兼容 Schema 测试 | 备份恢复、Git GC 后引用与快照可读；未用批准失效；不兼容 Schema 阻止新写入且旧 commit 保留。 |

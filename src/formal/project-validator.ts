@@ -1,5 +1,6 @@
 import { DesignTraceError } from "../core/errors.js";
 import { parseFrontmatter, parseYamlObject } from "./frontmatter.js";
+import { validateFormalObject, validateProjectObject } from "../domain/formal-object-schema.js";
 
 export interface TreeReader {
   listFiles(): Promise<Array<{ mode: string; path: string }>>;
@@ -47,9 +48,7 @@ export async function validateBaseline(reader: TreeReader): Promise<ValidatedBas
   }
 
   const project = parseYamlObject(await reader.readText("design/project.yaml"), "design/project.yaml");
-  if (project.schema_version !== 1) {
-    throw new DesignTraceError("INVALID_PROJECT", "Only project schema_version 1 is supported");
-  }
+  validateProjectObject(project);
   const projectId = requiredString(project, "project_id", "project");
   const pilotSystem = requiredString(project, "pilot_system", "project");
   const configPath = requiredString(project, "pilot_config", "project");
@@ -77,9 +76,7 @@ export async function validateBaseline(reader: TreeReader): Promise<ValidatedBas
   const bindings: Record<string, unknown>[] = [];
   for (const file of [...rulePaths, ...bindingPaths]) {
     const object = parseFrontmatter(await reader.readText(file.path), file.path);
-    if (object.schema_version !== 1) {
-      throw new DesignTraceError("INVALID_PROJECT", `${file.path} must use schema_version 1`);
-    }
+    validateFormalObject(file.path.startsWith("design/rules/") ? "rules" : "bindings", object, file.path);
     const id = requiredString(object, "id", file.path);
     if (ids.has(id)) {
       throw new DesignTraceError("INVALID_PROJECT", `Duplicate formal object ID: ${id}`);
