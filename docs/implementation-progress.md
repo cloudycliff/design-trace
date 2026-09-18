@@ -2,7 +2,7 @@
 
 > 最后更新：2026-09-18
 > 设计基线：`design-trace-architecture-and-roadmap.md` v0.7  
-> 当前结论：T01～T07 已形成固定夹具上的“计划批准—独立执行—候选冻结—验证—结果批准—原子发布—历史查询—补偿回退”完整纵向切片；尚未实现 Agent 接入和真实项目试用，因此未达到个人 MVP 退出条件。
+> 当前结论：T01～T08 的工程纵向切片已在固定夹具上连通；MCP 不具备签批能力，流程 Skill 保留两次独立操作员批准。尚未完成真实项目连续试用，因此未达到个人 MVP 退出条件。
 
 ## 范围说明
 
@@ -98,13 +98,22 @@
 - 若目标配置字段或对应 Rule 字段被后续 Change 修改，返回 `REVERT_CONFLICT` 及精确冲突位置，不自动合并或机械 `git revert`。
 - CLI 新增 `query-design`、`get-history` 和 `propose-revert`。
 
+### T08 Agent 接入（固定夹具切片）
+
+- 增加本地 stdio MCP 入口，公开查询、计划、状态、上下文、影响分析、审查请求、执行、冻结、验证、bundle、发布、取消和补偿回退工具。
+- MCP 复用已有领域服务与幂等/状态检查，不另建可绕过约束的写入路径。
+- MCP 工具集中不存在 approve/sign 能力；`request_review` 只返回操作员页面路径，执行批准与结果批准仍只由 loopback UI 签发。
+- 增加幂等 `cancel_change`；提交中任务必须先恢复发布结果，已发布任务必须走补偿 Change，不能伪装成取消。
+- 增加仓库内 `design-trace` Skill，明确查询、普通变更、补偿回退、两次批准和错误停止条件。
+- 增加 MCP 初始化/工具发现、无签批能力、正式查询和取消语义测试，以及 Agent 接入配置文档。
+
 ## 当前验证结果
 
 2026-09-18 本地执行：
 
 | 命令 | 结果 | 覆盖 |
 |---|---:|---|
-| `npm test` | 37 通过 | T07 原因/版本查询、完整补偿回退和后续字段冲突拒绝，以及 T01～T06 既有测试 |
+| `npm test` | 40 通过 | T08 MCP 协议、工具边界、取消语义，T07 历史/补偿回退，以及 T01～T06 既有测试 |
 | `npm run fixture:test` | 10 通过 | 0、1、19、100、101 金币在普通/困难模式下按配置值向下取整的程序行为 |
 
 这些测试只覆盖当前切片，不代表第 15.1 节 A01～A22 已全部通过。
@@ -119,7 +128,7 @@
 - T05：尚未接入真实 Agent 进程生命周期、停止确认、修复重试与候选 Rule 自动生成；当前仅支持计划明确列出的既有 JSON 文件。
 - T06：当前按首个 JSON/Rule 夹具生成正式对象；尚未覆盖通用 Rule 字段变更、完整对象 Schema、索引重建失败状态和所有 commit 创建前中断点。
 - T07：已支持字段级 Decision 读取和 unknown 理由，但尚无单独的 Decision 提案/录入流程；依赖冲突当前覆盖目标配置与 Rule 字段的后续变化。
-- T08：MCP、流程 Skill 与真实项目连续试用尚未实现。
+- T08：MCP 与流程 Skill 已实现；两个自动化夹具迭代已覆盖修改与回退，但真实项目连续试用及使用成本指标仍需真实项目输入。
 - 当前 YAML 校验仅覆盖首个夹具所需字段，还不是全部正式对象的完整 JSON Schema 验证。
 - 事件追加遵循单内核串行假设，尚无跨进程写锁；并发启动内核不在当前已验证范围内。
 
@@ -128,9 +137,9 @@
 1. 收尾 T02：补齐正式对象 Schema、批准失效事件、陈旧锁安全恢复和统一操作幂等包装。
 2. 收尾 T03：补齐候选期望值并把 ValidationRun 接入 Change 事件链。
 3. 收尾 T04：增加退回/取消、操作员会话恢复与批准异常恢复。
-4. 推进 T08：在领域服务之上增加 MCP 与流程 Skill，不为适配层绕过两次批准。
-5. 补齐 Mandatory 工程验收中尚未覆盖的备份/恢复、外部引用篡改和兼容性案例。
-6. 获得真实试点资料后补写阶段 0 记录；在此之前不宣称阶段 0 完成。
+4. 补齐 Mandatory 工程验收中尚未覆盖的备份/恢复、外部引用篡改和兼容性案例。
+5. 收尾完整对象 Schema、陈旧锁恢复、操作员会话恢复和通用 Rule 变更等工程限制。
+6. 获得真实试点资料后执行两个连续迭代并补写阶段 0/3 记录；在此之前不宣称个人 MVP 完成。
 
 ## 后续接手入口
 
@@ -148,6 +157,8 @@
 - 执行范围与快照：`src/domain/candidate-service.ts`
 - payload、bundle 与 CAS 发布：`src/domain/publication-service.ts`
 - 设计历史与补偿回退：`src/domain/history-service.ts`
+- Agent 服务适配：`src/mcp/design-trace-mcp.ts`、`src/mcp/stdio.ts`
+- Agent 流程 Skill：`skills/design-trace/SKILL.md`
 - 正式仓库初始化：`src/formal/formal-repository.ts`
 - 基线校验：`src/formal/project-validator.ts`
 - 首条验收夹具：`fixtures/death-penalty/`

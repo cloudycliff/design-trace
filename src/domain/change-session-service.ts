@@ -219,6 +219,36 @@ export class ChangeSessionService {
     return new EventStore(this.#sessionsRoot, changeId).recover();
   }
 
+  async cancelChange(
+    changeId: string,
+    idempotencyKey: string,
+    reason = "cancelled by user",
+    now = new Date(),
+  ): Promise<RecoveredSession> {
+    assertChangeId(changeId);
+    if (!idempotencyKey.trim() || !reason.trim()) {
+      throw new DesignTraceError("INVALID_PROJECT", "Cancellation key and reason are required");
+    }
+    return withFileLock(this.#lockPath, async () => {
+      const store = new EventStore(this.#sessionsRoot, changeId);
+      const requestDigest = digestObject({ change_id: changeId, reason });
+      const prior = await store.findOperation("cancel_change", idempotencyKey, requestDigest);
+      if (prior !== undefined) return prior as RecoveredSession;
+      const current = await store.recover();
+      if (current.state === "committing") {
+        throw new DesignTraceError("INVALID_STATE", "A committing Change must be recovered before cancellation");
+      }
+      if (current.state === "applied") {
+        throw new DesignTraceError("INVALID_STATE", "An applied Change must be compensated, not cancelled");
+      }
+      const cancelled = current.state === "cancelled"
+        ? current
+        : await store.transition("cancelled", reason, now);
+      await store.recordOperation("cancel_change", idempotencyKey, requestDigest, cancelled, now);
+      return cancelled;
+    });
+  }
+
   async startExecution(
     changeId: string,
     idempotencyKey: string,

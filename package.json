@@ -5,7 +5,8 @@
   "description": "Local-first design and implementation change control kernel",
   "type": "module",
   "bin": {
-    "design-trace": "dist/src/cli.js"
+    "design-trace": "dist/src/cli.js",
+    "design-trace-mcp": "dist/src/mcp/stdio.js"
   },
   "engines": {
     "node": ">=24"
