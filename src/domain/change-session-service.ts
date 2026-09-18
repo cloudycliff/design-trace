@@ -29,6 +29,7 @@ export interface ExecutionAttempt {
   baseline_commit: string;
   workspace_id: string;
   attempt_number: number;
+  previous_attempt_id: string | null;
   status: "started";
   started_at: string;
 }
@@ -280,6 +281,7 @@ export class ChangeSessionService {
         throw new DesignTraceError("INVALID_STATE", "Execution attempt budget is exhausted");
       }
       const approval = await new ApprovalAuthority(this.projectRoot).requireValidExecutionApproval(changeId, now);
+      const previousAttemptId = session.activeAttemptId;
       const first = session.events[0]!;
       const baselineCommit = String(first.data.baseline_commit);
       if (await this.#formalRepository.currentCommit() !== baselineCommit) {
@@ -328,6 +330,7 @@ export class ChangeSessionService {
         baseline_commit: baselineCommit,
         workspace_id: attemptId,
         attempt_number: session.attemptCount + 1,
+        previous_attempt_id: previousAttemptId,
         status: "started",
         started_at: now.toISOString(),
       };

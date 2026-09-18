@@ -124,6 +124,7 @@ test("result review rejects validation evidence from a different environment", a
 test("result review uses the protected loopback channel and cannot approve another bundle", async () => {
   const setup = await validatedChange();
   const bundle = await setup.publications.buildResultReview(setup.changeId, "bundle-key");
+  assert.match(bundle.attempt_id, /^ATT-/u);
   const review = await setup.authority.prepareResultReview(setup.changeId, bundle.bundle_id);
   const server = new OperatorServer(setup.authority);
   const origin = await server.start();
@@ -265,7 +266,7 @@ test("interruption before final commit creation resumes from committing", async 
     setup.changeId,
     bundle.bundle_id,
     "commit-key",
-    publicationTime,
+    new Date(publicationTime.getTime() + 48 * 60 * 60 * 1000),
   );
   assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), recovered.commit);
   assert.equal((await setup.sessions.getStatus(setup.changeId)).state, "applied");
@@ -295,7 +296,7 @@ test("interruption after final commit preparation resumes before CAS without dup
     setup.changeId,
     bundle.bundle_id,
     "commit-key",
-    new Date(publicationTime.getTime() + 1_000),
+    new Date(publicationTime.getTime() + 48 * 60 * 60 * 1000),
   );
   assert.equal(recovered.commit, interrupted.preparedCommit);
   assert.equal(await new FormalRepository(setup.repositoryPath).currentCommit(), recovered.commit);

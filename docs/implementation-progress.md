@@ -155,10 +155,13 @@
 3. 根据试用证据决定是否投入人工 Evidence 界面、持久化索引、通用 Rule 字段/多格式适配和真实 Agent 子进程托管。
 4. 分发前再补齐每类正式对象的穷尽式 Schema、升级迁移流程与插件 manifest；这些不是当前固定夹具闭环的阻塞项。
 
+真实项目输入与两个迭代的记录格式已预置在 `docs/real-project-trial-template.md`，取得资料后可直接执行，无需重新设计验收口径。
+
 ## 后续接手入口
 
 - 产品与安全契约：`docs/design-trace-architecture-and-roadmap.md`
 - Mandatory 验收矩阵：`docs/acceptance-status.md`
+- 真实项目试用模板：`docs/real-project-trial-template.md`
 - 当前状态：本文
 - 状态机：`src/core/state-machine.ts`
 - 恢复与幂等原型：`src/core/event-store.ts`

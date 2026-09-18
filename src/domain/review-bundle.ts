@@ -4,6 +4,7 @@ export interface ReviewBundle {
   change_id: string;
   plan_revision: number;
   baseline_commit: string;
+  attempt_id: string;
   execution_snapshot_id: string;
   execution_tree_oid: string;
   payload_commit: string;

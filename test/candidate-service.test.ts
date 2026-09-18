@@ -157,6 +157,7 @@ test("validation runs against the frozen snapshot and advances only on required 
   );
   assert.equal(validation.all_required_passed, true);
   assert.ok(validation.runs.every((run) => run.source_tree_oid === snapshot.execution_tree_oid));
+  assert.ok(validation.runs.every((run) => run.snapshot_id === snapshot.snapshot_id));
   const status = await setup.sessions.getStatus(setup.changeId);
   assert.equal(status.state, "awaiting_result_approval");
   assert.equal(status.validationBatchId, validation.batch_id);
@@ -185,6 +186,7 @@ test("a changing workspace interrupts snapshot capture and only a new bounded at
 
   const second = await setup.sessions.startExecution(setup.changeId, "second-attempt");
   assert.equal(second.attempt_number, 2);
+  assert.equal(second.previous_attempt_id, setup.attemptId);
   await assert.rejects(
     setup.candidates.freezeCandidate(setup.changeId, setup.attemptId, "old-attempt"),
     (error) => error instanceof DesignTraceError && error.code === "INVALID_STATE",

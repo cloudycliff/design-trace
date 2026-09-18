@@ -1,7 +1,7 @@
 # Mandatory 工程验收状态
 
-> 最后更新：2026-09-18  
-> 基线：`design-trace-architecture-and-roadmap.md` v0.7 第 15.1 节  
+> 最后更新：2026-09-18
+> 基线：`design-trace-architecture-and-roadmap.md` v0.7 第 15.1 节
 > 口径：本表只确认固定夹具上的工程行为；不替代真实项目连续试用和产品收益评估。
 
 ## 结果

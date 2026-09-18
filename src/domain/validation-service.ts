@@ -17,6 +17,7 @@ export type ValidationResult = "passed" | "failed" | "unknown" | "error" | "time
 
 export interface ValidationRun {
   run_id: string;
+  snapshot_id: string | null;
   source_tree_oid: string;
   input_manifest_digest: string;
   check_id: string;
@@ -41,6 +42,7 @@ export interface ValidationBatch {
 export interface ValidationOptions {
   checkIds?: string[];
   parameterExpectations?: Record<string, string | number | boolean>;
+  snapshotId?: string;
 }
 
 export function validationInputManifestDigest(sourceTreeOid: string): string {
@@ -119,6 +121,7 @@ export class ValidationService {
       }
       runs.push({
         run_id: `VAL-${randomUUID().toUpperCase()}`,
+        snapshot_id: options.snapshotId ?? null,
         source_tree_oid: sourceTreeOid,
         input_manifest_digest: inputManifestDigest,
         check_id: check.id,

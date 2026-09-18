@@ -140,6 +140,7 @@ export class PublicationService {
         validation.runs.some((run) => {
           const check = registeredChecks.get(run.check_id);
           return !check ||
+            run.snapshot_id !== snapshot.snapshot_id ||
             run.check_version !== check.version ||
             run.required !== check.required ||
             run.runner_digest !== digestObject(check.runner) ||
@@ -191,6 +192,7 @@ export class PublicationService {
           change_id: changeId,
           plan_revision: plan.plan_revision,
           baseline_commit: plan.baseline_commit,
+          attempt_id: snapshot.attempt_id,
           execution_snapshot_id: snapshot.snapshot_id,
           execution_tree_oid: snapshot.execution_tree_oid,
           payload_commit: payloadCommit,
@@ -245,12 +247,12 @@ export class PublicationService {
       if (prior !== undefined) return prior as PublishedChange;
       const bundle = await this.readBundle(changeId, bundleId);
       const formalBefore = await this.currentFormalCommit();
-      const recoveringPublishedCommit = session.preparedCommit !== null && formalBefore === session.preparedCommit;
+      const recoveringPublication = session.state === "committing";
       const approval = await new ApprovalAuthority(this.projectRoot).requireValidResultApproval(
         changeId,
         bundleId,
         now,
-        recoveringPublishedCommit,
+        recoveringPublication,
       );
 
       if (session.activeBundleId !== bundleId || session.activeReviewDigest !== bundle.review_digest) {

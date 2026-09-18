@@ -294,7 +294,7 @@ export class CandidateService {
         validation = await new ValidationService(
           this.#repositoryPath,
           path.join(this.projectRoot, "validation"),
-        ).run(snapshot.snapshot_commit, { checkIds, parameterExpectations: expectations });
+        ).run(snapshot.snapshot_commit, { checkIds, parameterExpectations: expectations, snapshotId });
       } catch (error) {
         await store.transition(
           "interrupted",

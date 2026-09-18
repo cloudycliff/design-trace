@@ -46,6 +46,8 @@ npm run fixture:test
 [`docs/implementation-progress.md`](docs/implementation-progress.md) 为准。
 固定夹具 A01～A22 的逐条自动化证据见
 [`docs/acceptance-status.md`](docs/acceptance-status.md)。
+真实项目阶段 0/3 的输入与指标记录模板见
+[`docs/real-project-trial-template.md`](docs/real-project-trial-template.md)。
 
 Agent 接入说明及 MCP 配置示例见 [`docs/agent-integration.md`](docs/agent-integration.md)，流程 Skill 位于
 [`skills/design-trace/SKILL.md`](skills/design-trace/SKILL.md)。
